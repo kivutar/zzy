@@ -13,6 +13,7 @@ gpui-component-assets = "0.4.2"
 portable-pty = "0.9.0"
 alacritty_terminal = "0.25.1"
 parking_lot = "0.12.5"
+futures = "0.3"
 
 [lints]
 # optional: remove this if unused

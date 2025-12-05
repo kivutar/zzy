@@ -2,13 +2,16 @@ mod terminal;
 
 use gpui::*;
 use gpui_component::{
+    h_flex,
     tab::{Tab, TabBar},
-    h_flex, v_flex, Root, TitleBar,
-    Theme, ThemeMode, IconName
+    v_flex, IconName, Root, Theme, ThemeMode, TitleBar,
 };
 use terminal::TerminalView;
 
-pub struct Example;
+pub struct Example {
+    terminal: Entity<TerminalView>,
+}
+
 impl Render for Example {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex()
@@ -30,20 +33,23 @@ impl Render for Example {
                     .on_click(|selected_index, _, _| {
                         println!("Tab {} selected", selected_index);
                     })
-                    .child(Tab::new().label("/bin/bash ~")
-                        .px_2()
-                        .suffix(IconName::Close)
-                    )
+                    .child(
+                        Tab::new()
+                            .label("/bin/bash ~")
+                            .px_2()
+                            .suffix(IconName::Close),
+                    ),
             )
             .child(
-                div()
+                v_flex()
                     .id("window-body")
+                    .flex_1()
+                    .w_full()
+                    .h_full()
                     .p_5()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .child("Hello, World!")
-                    .child(TerminalView::new())
+                    .items_start()
+                    .justify_start()
+                    .child(AnyView::from(self.terminal.clone())),
             )
     }
 }
@@ -65,7 +71,10 @@ fn main() {
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
-                let view = cx.new(|_| Example);
+                let view = cx.new(|cx| {
+                    let terminal = cx.new(|cx| TerminalView::new(cx));
+                    Example { terminal }
+                });
                 cx.new(|cx| Root::new(view, window, cx))
             })?;
 
