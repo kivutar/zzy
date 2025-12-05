@@ -2,6 +2,7 @@ use std::{
     io::{Read, Write},
     sync::Arc,
     thread,
+    time::Duration,
 };
 
 use alacritty_terminal::{
@@ -43,6 +44,7 @@ pub struct TerminalView {
     title: Option<String>,
     error: Option<String>,
     keystroke_sub: Option<Subscription>,
+    cursor_visible: bool,
 }
 
 #[derive(Clone)]
@@ -124,6 +126,7 @@ impl TerminalView {
             title: None,
             error: None,
             keystroke_sub: None,
+            cursor_visible: true,
         };
 
         let focus = view.focus_handle.clone();
@@ -137,6 +140,7 @@ impl TerminalView {
                 if let Some(entity) = weak.upgrade() {
                     let _ = entity.update(cx, |view, _cx| {
                         // Send Tab (or back-tab) directly to the PTY when the terminal is focused.
+                        view.cursor_visible = true;
                         if event.keystroke.modifiers.shift {
                             view.write_bytes(b"\x1b[Z");
                         } else {
@@ -150,6 +154,7 @@ impl TerminalView {
 
         view.spawn_message_loop(rx, cx);
         view.start_pty(tx, cx);
+        view.start_cursor_blink(cx);
         view
     }
 
@@ -244,10 +249,36 @@ impl TerminalView {
         .detach();
     }
 
+    fn start_cursor_blink(&mut self, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
+        cx.spawn(move |_view: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let view = view.clone();
+            let mut app = cx.clone();
+            async move {
+                loop {
+                    app.background_executor()
+                        .timer(Duration::from_millis(530))
+                        .await;
+                    if view
+                        .update(&mut app, |view, cx| {
+                            view.cursor_visible = !view.cursor_visible;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
     fn handle_msg(&mut self, msg: TerminalMsg, cx: &mut Context<Self>) {
         match msg {
             TerminalMsg::Output(bytes) => {
                 self.parser.advance(&mut self.term, &bytes);
+                self.cursor_visible = true;
                 cx.notify();
             }
             TerminalMsg::Event(event) => self.handle_event(event, cx),
@@ -429,6 +460,7 @@ impl TerminalView {
         }
 
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke) {
+            self.cursor_visible = true;
             self.write_bytes(&bytes);
             cx.notify();
         }
@@ -520,15 +552,16 @@ impl Render for TerminalView {
                         .font_family(cx.theme().mono_font_family.clone());
 
                     for seg in segments {
+                        let show_cursor = seg.is_cursor && self.cursor_visible;
                         line_row = line_row.child(
                             div()
                                 .whitespace_nowrap()
-                                .text_color(if seg.is_cursor {
+                                .text_color(if show_cursor {
                                     palette.cursor_color()
                                 } else {
                                     seg.fg
                                 })
-                                .bg(if seg.is_cursor {
+                                .bg(if show_cursor {
                                     palette.cursor_bg()
                                 } else {
                                     seg.bg
