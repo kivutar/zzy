@@ -104,7 +104,7 @@ impl TerminalView {
             &SimpleDimensions::new(DEFAULT_COLS, DEFAULT_ROWS),
             proxy,
         );
-        let font_size: f32 = cx.theme().mono_font_size.into();
+        let font_size: f32 = 15.0; //cx.theme().mono_font_size.into();
 
         let mut view = Self {
             focus_handle,

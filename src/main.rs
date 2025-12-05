@@ -68,6 +68,8 @@ fn main() {
         gpui_component::init(cx);
         Theme::global_mut(cx).mode = ThemeMode::Dark;
         Theme::change(ThemeMode::Dark, None, cx);
+        // Override the monospace font after applying the theme so it doesn't get reset.
+        Theme::global_mut(cx).mono_font_family = "Adwaita Mono".into();
 
         let window_options = WindowOptions {
             // Setup GPUI to use custom title bar and client-side decorations for Wayland/X11.
