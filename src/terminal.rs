@@ -17,13 +17,12 @@ use gpui::{
     IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, ParentElement, Render,
     ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, WeakEntity, Window,
 };
-use gpui_component::v_flex;
+use gpui_component::{v_flex, ActiveTheme};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
 const DEFAULT_COLS: usize = 80;
 const DEFAULT_ROWS: usize = 24;
-const DEFAULT_FONT_SIZE: f32 = 14.0;
 const DEFAULT_CELL_WIDTH: f32 = 8.0;
 const DEFAULT_CELL_HEIGHT: f32 = 18.0;
 
@@ -90,6 +89,7 @@ impl TerminalView {
             &SimpleDimensions::new(DEFAULT_COLS, DEFAULT_ROWS),
             proxy,
         );
+        let font_size: f32 = cx.theme().mono_font_size.into();
 
         let mut view = Self {
             focus_handle,
@@ -100,7 +100,7 @@ impl TerminalView {
             _child: None,
             rows: DEFAULT_ROWS,
             cols: DEFAULT_COLS,
-            font_size: DEFAULT_FONT_SIZE,
+            font_size,
             cell_width: DEFAULT_CELL_WIDTH,
             cell_height: DEFAULT_CELL_HEIGHT,
             last_bounds: None,
@@ -380,7 +380,7 @@ impl Render for TerminalView {
             .w_full()
             .h_full()
             .text_color(rgb(0xffffff))
-            .font_family(".ZedMono")
+            .font_family(cx.theme().mono_font_family.clone())
             .text_size(px(self.font_size))
             .line_height(px(self.cell_height))
             .whitespace_nowrap()
@@ -413,7 +413,7 @@ impl Render for TerminalView {
                             .whitespace_nowrap()
                             .text_size(px(self.font_size))
                             .line_height(px(self.cell_height))
-                            .font_family(".ZedMono")
+                            .font_family(cx.theme().mono_font_family.clone())
                             .child(err),
                     );
                 }
@@ -424,7 +424,7 @@ impl Render for TerminalView {
                             .whitespace_nowrap()
                             .text_size(px(self.font_size))
                             .line_height(px(self.cell_height))
-                            .font_family(".ZedMono")
+                            .font_family(cx.theme().mono_font_family.clone())
                             .child(line),
                     );
                 }
