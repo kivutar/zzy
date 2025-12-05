@@ -1,9 +1,12 @@
+mod terminal;
+
 use gpui::*;
 use gpui_component::{
     tab::{Tab, TabBar},
     h_flex, v_flex, Root, TitleBar,
     Theme, ThemeMode, IconName
 };
+use terminal::TerminalView;
 
 pub struct Example;
 impl Render for Example {
@@ -40,6 +43,7 @@ impl Render for Example {
                     .items_center()
                     .justify_center()
                     .child("Hello, World!")
+                    .child(TerminalView::new())
             )
     }
 }
