@@ -48,6 +48,7 @@ struct CellRender {
     text: String,
     fg: Rgba,
     bg: Rgba,
+    is_cursor: bool,
 }
 
 struct Palette {
@@ -306,9 +307,10 @@ impl TerminalView {
         })
     }
 
-    fn visible_segments(&self) -> Vec<Vec<CellRender>> {
+    fn visible_segments(&self) -> (Vec<Vec<CellRender>>, Palette) {
         let content = self.term.renderable_content();
         let palette = Palette::new(content.colors);
+        let cursor = content.cursor;
 
         let mut grid = vec![
             vec![
@@ -316,6 +318,7 @@ impl TerminalView {
                     text: " ".into(),
                     fg: palette.default_fg,
                     bg: palette.default_bg,
+                    is_cursor: false,
                 };
                 self.cols
             ];
@@ -349,17 +352,25 @@ impl TerminalView {
             }
 
             let (fg, bg) = palette.fg_bg(&cell.cell);
-            grid[line_idx][col] = CellRender { text: ch, fg, bg };
+            let is_cursor = cursor.point == cell.point;
+            grid[line_idx][col] = CellRender {
+                text: ch,
+                fg,
+                bg,
+                is_cursor,
+            };
         }
 
-        grid.into_iter()
+        let segments = grid
+            .into_iter()
             .map(|row| {
                 let mut segments = Vec::new();
                 let mut current: Option<CellRender> = None;
 
                 for cell in row {
                     if let Some(seg) = &mut current {
-                        if seg.fg == cell.fg && seg.bg == cell.bg {
+                        if seg.fg == cell.fg && seg.bg == cell.bg && seg.is_cursor == cell.is_cursor
+                        {
                             seg.text.push_str(&cell.text);
                         } else {
                             segments.push(seg.clone());
@@ -376,7 +387,9 @@ impl TerminalView {
 
                 segments
             })
-            .collect()
+            .collect();
+
+        (segments, palette)
     }
 
     fn handle_key_down(
@@ -421,7 +434,7 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let error = self.error.clone();
-        let segments_by_line = self.visible_segments();
+        let (segments_by_line, palette) = self.visible_segments();
 
         let view = cx.entity();
         div()
@@ -480,8 +493,16 @@ impl Render for TerminalView {
                         line_row = line_row.child(
                             div()
                                 .whitespace_nowrap()
-                                .text_color(seg.fg)
-                                .bg(seg.bg)
+                                .text_color(if seg.is_cursor {
+                                    palette.cursor_color()
+                                } else {
+                                    seg.fg
+                                })
+                                .bg(if seg.is_cursor {
+                                    palette.cursor_bg()
+                                } else {
+                                    seg.bg
+                                })
                                 .child(seg.text),
                         );
                     }
@@ -589,6 +610,17 @@ impl Palette {
         if let Some(slot) = self.resolved.get_mut(idx) {
             *slot = Some(rgba_hex(hex));
         }
+    }
+
+    fn cursor_bg(&self) -> Rgba {
+        self.resolved
+            .get(ansi::NamedColor::Cursor as usize)
+            .and_then(|c| *c)
+            .unwrap_or(self.default_fg)
+    }
+
+    fn cursor_color(&self) -> Rgba {
+        self.default_bg
     }
 }
 
