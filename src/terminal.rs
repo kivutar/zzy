@@ -690,7 +690,7 @@ impl Palette {
 
 fn resolve_indexed(idx: u8) -> Rgba {
     if idx < 16 {
-        to_rgba(default_ansi_color(idx))
+        to_rgba(hex_to_rgb(HAMI_INDEXED[idx as usize]))
     } else if (16..=231).contains(&idx) {
         to_rgba(color_cube(idx))
     } else {
@@ -704,65 +704,8 @@ fn resolve_named_color(
 ) -> ansi::Rgb {
     match palette[name] {
         Some(rgb) => rgb,
-        None => match name {
-            ansi::NamedColor::Foreground => ansi::Rgb {
-                r: 223,
-                g: 223,
-                b: 223,
-            },
-            ansi::NamedColor::Background => ansi::Rgb { r: 0, g: 0, b: 0 },
-            ansi::NamedColor::Cursor => ansi::Rgb {
-                r: 255,
-                g: 255,
-                b: 255,
-            },
-            ansi::NamedColor::BrightForeground => ansi::Rgb {
-                r: 255,
-                g: 255,
-                b: 255,
-            },
-            ansi::NamedColor::DimBlack => scale(&default_ansi_color(0), 0.66),
-            ansi::NamedColor::DimRed => scale(&default_ansi_color(1), 0.66),
-            ansi::NamedColor::DimGreen => scale(&default_ansi_color(2), 0.66),
-            ansi::NamedColor::DimYellow => scale(&default_ansi_color(3), 0.66),
-            ansi::NamedColor::DimBlue => scale(&default_ansi_color(4), 0.66),
-            ansi::NamedColor::DimMagenta => scale(&default_ansi_color(5), 0.66),
-            ansi::NamedColor::DimCyan => scale(&default_ansi_color(6), 0.66),
-            ansi::NamedColor::DimWhite => scale(&default_ansi_color(7), 0.66),
-            ansi::NamedColor::BrightBlack => default_ansi_color(8),
-            ansi::NamedColor::BrightRed => default_ansi_color(9),
-            ansi::NamedColor::BrightGreen => default_ansi_color(10),
-            ansi::NamedColor::BrightYellow => default_ansi_color(11),
-            ansi::NamedColor::BrightBlue => default_ansi_color(12),
-            ansi::NamedColor::BrightMagenta => default_ansi_color(13),
-            ansi::NamedColor::BrightCyan => default_ansi_color(14),
-            ansi::NamedColor::BrightWhite => default_ansi_color(15),
-            _ => default_ansi_color(((name as usize) % 16) as u8),
-        },
+        None => hami_named_color(name).unwrap_or(hex_to_rgb(HAMI_INDEXED[(name as usize) % 16])),
     }
-}
-
-fn default_ansi_color(idx: u8) -> ansi::Rgb {
-    const LEVELS: [(u8, u8, u8); 16] = [
-        (0, 0, 0),
-        (205, 0, 0),
-        (0, 205, 0),
-        (205, 205, 0),
-        (0, 0, 238),
-        (205, 0, 205),
-        (0, 205, 205),
-        (229, 229, 229),
-        (127, 127, 127),
-        (255, 0, 0),
-        (0, 255, 0),
-        (255, 255, 0),
-        (92, 92, 255),
-        (255, 0, 255),
-        (0, 255, 255),
-        (255, 255, 255),
-    ];
-    let (r, g, b) = LEVELS[idx.min(15) as usize];
-    ansi::Rgb { r, g, b }
 }
 
 fn color_cube(idx: u8) -> ansi::Rgb {
@@ -784,21 +727,46 @@ fn color_cube(idx: u8) -> ansi::Rgb {
     }
 }
 
+fn hex_to_rgb(hex: u32) -> ansi::Rgb {
+    ansi::Rgb {
+        r: ((hex >> 24) & 0xff) as u8,
+        g: ((hex >> 16) & 0xff) as u8,
+        b: ((hex >> 8) & 0xff) as u8,
+    }
+}
+
+fn hami_named_color(name: ansi::NamedColor) -> Option<ansi::Rgb> {
+    HAMI_MELON_NAMED
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, hex)| hex_to_rgb(*hex))
+}
+
+const HAMI_INDEXED: [u32; 16] = [
+    0x282c33ff, // black
+    0xD34949ff, // red
+    0x88B292ff, // green
+    0xCB9484ff, // yellow
+    0x7490BEff, // blue
+    0x9A5061ff, // magenta
+    0x66A6B0ff, // cyan
+    0xc8ccd4ff, // white
+    0x525561ff, // bright black
+    0xD34949ff, // bright red
+    0x88B292ff, // bright green
+    0xCB9484ff, // bright yellow
+    0x7490BEff, // bright blue
+    0x9A5061ff, // bright magenta
+    0x66A6B0ff, // bright cyan
+    0xc8ccd4ff, // bright white
+];
+
 fn grayscale(idx: u8) -> ansi::Rgb {
     let value = 8 + 10 * idx.saturating_sub(232);
     ansi::Rgb {
         r: value,
         g: value,
         b: value,
-    }
-}
-
-fn scale(color: &ansi::Rgb, factor: f32) -> ansi::Rgb {
-    let f = |c: u8| -> u8 { ((c as f32 * factor).round() as u8).min(255) };
-    ansi::Rgb {
-        r: f(color.r),
-        g: f(color.g),
-        b: f(color.b),
     }
 }
 
