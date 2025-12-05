@@ -505,7 +505,6 @@ impl Render for TerminalView {
             .flex_1()
             .w_full()
             .h_full()
-            .text_color(rgb(0xffffff))
             .font_family(cx.theme().mono_font_family.clone())
             .text_size(px(self.font_size))
             .line_height(px(self.cell_height))
