@@ -1,15 +1,15 @@
 [package]
-name = "kivutar"
-description = "An example of using gpui-component to create a window with a custom title bar."
+name = "term"
 version = "0.1.0"
+edition = "2021"
+description = "GPUI terminal test"
 publish = false
-edition.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-gpui.workspace = true
-gpui-component.workspace = true
-gpui-component-assets.workspace = true
+anyhow = "1"
+gpui = "0.2.2"
+gpui-component = "0.4.2"
+gpui-component-assets = "0.4.2"
 
 [lints]
-workspace = true
+# optional: remove this if unused
