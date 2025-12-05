@@ -63,8 +63,10 @@ fn main() {
         Theme::change(ThemeMode::Dark, None, cx);
 
         let window_options = WindowOptions {
-            // Setup GPUI to use custom title bar
+            // Setup GPUI to use custom title bar and client-side decorations for Wayland/X11.
             titlebar: Some(TitleBar::title_bar_options()),
+            window_decorations: Some(WindowDecorations::Client),
+            window_background: WindowBackgroundAppearance::Transparent,
             window_bounds: Some(WindowBounds::centered(size(px(800.), px(600.)), cx)),
             ..Default::default()
         };
