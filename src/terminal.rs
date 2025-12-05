@@ -25,7 +25,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 
 const DEFAULT_COLS: usize = 80;
 const DEFAULT_ROWS: usize = 24;
-const DEFAULT_CELL_WIDTH: f32 = 12.0;
+const DEFAULT_CELL_WIDTH: f32 = 8.0;
 const DEFAULT_CELL_HEIGHT: f32 = 24.0;
 const DEFAULT_FONT_SIZE: f32 = 15.0;
 
