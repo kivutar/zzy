@@ -14,10 +14,10 @@ use anyhow::Context as _;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     canvas, div, px, rgb, AsyncApp, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, ParentElement, Render,
+    IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, ParentElement, Render, Rgba,
     ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, WeakEntity, Window,
 };
-use gpui_component::{v_flex, ActiveTheme};
+use gpui_component::{h_flex, v_flex, ActiveTheme};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
@@ -41,6 +41,13 @@ pub struct TerminalView {
     last_bounds: Option<Bounds<gpui::Pixels>>,
     title: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Clone)]
+struct CellRender {
+    text: String,
+    fg: Rgba,
+    bg: Rgba,
 }
 
 #[derive(Clone)]
@@ -292,9 +299,23 @@ impl TerminalView {
         })
     }
 
-    fn visible_text(&self) -> Vec<String> {
-        let mut grid = vec![vec![String::from(" "); self.cols]; self.rows];
+    fn visible_segments(&self) -> Vec<Vec<CellRender>> {
         let content = self.term.renderable_content();
+        let palette = content.colors;
+        let default_fg = to_rgba(resolve_named_color(ansi::NamedColor::Foreground, palette));
+        let default_bg = to_rgba(resolve_named_color(ansi::NamedColor::Background, palette));
+
+        let mut grid = vec![
+            vec![
+                CellRender {
+                    text: " ".into(),
+                    fg: default_fg,
+                    bg: default_bg,
+                };
+                self.cols
+            ];
+            self.rows
+        ];
 
         for cell in content.display_iter {
             let line = cell.point.line.0;
@@ -321,11 +342,40 @@ impl TerminalView {
                     ch.push(*c);
                 }
             }
-            grid[line_idx][col] = ch;
+
+            let mut fg = resolve_color(&cell.cell.fg, palette);
+            let mut bg = resolve_color(&cell.cell.bg, palette);
+            if cell.cell.flags.contains(Flags::INVERSE) {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+
+            grid[line_idx][col] = CellRender { text: ch, fg, bg };
         }
 
         grid.into_iter()
-            .map(|row| row.into_iter().collect::<String>())
+            .map(|row| {
+                let mut segments = Vec::new();
+                let mut current: Option<CellRender> = None;
+
+                for cell in row {
+                    if let Some(seg) = &mut current {
+                        if seg.fg == cell.fg && seg.bg == cell.bg {
+                            seg.text.push_str(&cell.text);
+                        } else {
+                            segments.push(seg.clone());
+                            current = Some(cell);
+                        }
+                    } else {
+                        current = Some(cell);
+                    }
+                }
+
+                if let Some(seg) = current {
+                    segments.push(seg);
+                }
+
+                segments
+            })
             .collect()
     }
 
@@ -370,8 +420,8 @@ impl TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let lines = self.visible_text();
         let error = self.error.clone();
+        let segments_by_line = self.visible_segments();
 
         let view = cx.entity();
         div()
@@ -417,16 +467,26 @@ impl Render for TerminalView {
                             .child(err),
                     );
                 }
-                for line in lines.into_iter() {
-                    lines_view = lines_view.child(
-                        div()
-                            .w_full()
-                            .whitespace_nowrap()
-                            .text_size(px(self.font_size))
-                            .line_height(px(self.cell_height))
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(line),
-                    );
+                for (idx, segments) in segments_by_line.into_iter().enumerate() {
+                    let mut line_row = h_flex()
+                        .id(("line", idx as u32))
+                        .w_full()
+                        .whitespace_nowrap()
+                        .text_size(px(self.font_size))
+                        .line_height(px(self.cell_height))
+                        .font_family(cx.theme().mono_font_family.clone());
+
+                    for seg in segments {
+                        line_row = line_row.child(
+                            div()
+                                .whitespace_nowrap()
+                                .text_color(seg.fg)
+                                .bg(seg.bg)
+                                .child(seg.text),
+                        );
+                    }
+
+                    lines_view = lines_view.child(line_row);
                 }
                 lines_view
             })
@@ -473,5 +533,140 @@ fn keystroke_to_bytes(keystroke: &Keystroke) -> Option<Vec<u8>> {
         "pagedown" => Some(b"\x1b[6~".to_vec()),
         "delete" => Some(b"\x1b[3~".to_vec()),
         _ => None,
+    }
+}
+
+fn resolve_color(color: &ansi::Color, palette: &alacritty_terminal::term::color::Colors) -> Rgba {
+    match color {
+        ansi::Color::Spec(rgb) => to_rgba(*rgb),
+        ansi::Color::Indexed(idx) => palette[*idx as usize]
+            .map(to_rgba)
+            .unwrap_or_else(|| resolve_indexed(*idx)),
+        ansi::Color::Named(name) => palette[*name]
+            .map(to_rgba)
+            .unwrap_or_else(|| to_rgba(resolve_named_color(*name, palette))),
+    }
+}
+
+fn resolve_indexed(idx: u8) -> Rgba {
+    if idx < 16 {
+        to_rgba(default_ansi_color(idx))
+    } else if (16..=231).contains(&idx) {
+        to_rgba(color_cube(idx))
+    } else {
+        to_rgba(grayscale(idx))
+    }
+}
+
+fn resolve_named_color(
+    name: ansi::NamedColor,
+    palette: &alacritty_terminal::term::color::Colors,
+) -> ansi::Rgb {
+    match palette[name] {
+        Some(rgb) => rgb,
+        None => match name {
+            ansi::NamedColor::Foreground => ansi::Rgb {
+                r: 223,
+                g: 223,
+                b: 223,
+            },
+            ansi::NamedColor::Background => ansi::Rgb { r: 0, g: 0, b: 0 },
+            ansi::NamedColor::Cursor => ansi::Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+            ansi::NamedColor::BrightForeground => ansi::Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+            ansi::NamedColor::DimBlack => scale(&default_ansi_color(0), 0.66),
+            ansi::NamedColor::DimRed => scale(&default_ansi_color(1), 0.66),
+            ansi::NamedColor::DimGreen => scale(&default_ansi_color(2), 0.66),
+            ansi::NamedColor::DimYellow => scale(&default_ansi_color(3), 0.66),
+            ansi::NamedColor::DimBlue => scale(&default_ansi_color(4), 0.66),
+            ansi::NamedColor::DimMagenta => scale(&default_ansi_color(5), 0.66),
+            ansi::NamedColor::DimCyan => scale(&default_ansi_color(6), 0.66),
+            ansi::NamedColor::DimWhite => scale(&default_ansi_color(7), 0.66),
+            ansi::NamedColor::BrightBlack => default_ansi_color(8),
+            ansi::NamedColor::BrightRed => default_ansi_color(9),
+            ansi::NamedColor::BrightGreen => default_ansi_color(10),
+            ansi::NamedColor::BrightYellow => default_ansi_color(11),
+            ansi::NamedColor::BrightBlue => default_ansi_color(12),
+            ansi::NamedColor::BrightMagenta => default_ansi_color(13),
+            ansi::NamedColor::BrightCyan => default_ansi_color(14),
+            ansi::NamedColor::BrightWhite => default_ansi_color(15),
+            _ => default_ansi_color(((name as usize) % 16) as u8),
+        },
+    }
+}
+
+fn default_ansi_color(idx: u8) -> ansi::Rgb {
+    const LEVELS: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (205, 0, 0),
+        (0, 205, 0),
+        (205, 205, 0),
+        (0, 0, 238),
+        (205, 0, 205),
+        (0, 205, 205),
+        (229, 229, 229),
+        (127, 127, 127),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (92, 92, 255),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 255),
+    ];
+    let (r, g, b) = LEVELS[idx.min(15) as usize];
+    ansi::Rgb { r, g, b }
+}
+
+fn color_cube(idx: u8) -> ansi::Rgb {
+    let idx = idx.saturating_sub(16);
+    let r = idx / 36;
+    let g = (idx / 6) % 6;
+    let b = idx % 6;
+    let level = |v: u8| -> u8 {
+        if v == 0 {
+            0
+        } else {
+            55 + v * 40
+        }
+    };
+    ansi::Rgb {
+        r: level(r),
+        g: level(g),
+        b: level(b),
+    }
+}
+
+fn grayscale(idx: u8) -> ansi::Rgb {
+    let value = 8 + 10 * idx.saturating_sub(232);
+    ansi::Rgb {
+        r: value,
+        g: value,
+        b: value,
+    }
+}
+
+fn scale(color: &ansi::Rgb, factor: f32) -> ansi::Rgb {
+    let f = |c: u8| -> u8 { ((c as f32 * factor).round() as u8).min(255) };
+    ansi::Rgb {
+        r: f(color.r),
+        g: f(color.g),
+        b: f(color.b),
+    }
+}
+
+fn to_rgba(rgb: ansi::Rgb) -> Rgba {
+    Rgba {
+        r: rgb.r as f32 / 255.0,
+        g: rgb.g as f32 / 255.0,
+        b: rgb.b as f32 / 255.0,
+        a: 1.0,
     }
 }

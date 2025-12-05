@@ -46,7 +46,7 @@ impl Render for Example {
                     .flex_1()
                     .w_full()
                     .h_full()
-                    .p_5()
+                    .p_2()
                     .items_start()
                     .justify_start()
                     .child(AnyView::from(self.terminal.clone())),
