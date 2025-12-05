@@ -14,7 +14,7 @@ use alacritty_terminal::{
 use anyhow::Context as _;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    canvas, div, px, rgb, AsyncApp, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
+    canvas, div, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
     IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, ParentElement, Render, Rgba,
     ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, Subscription, WeakEntity,
     Window,

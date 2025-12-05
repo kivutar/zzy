@@ -4,7 +4,7 @@ use gpui::*;
 use gpui_component::{
     h_flex,
     tab::{Tab, TabBar},
-    v_flex, IconName, Root, Theme, ThemeMode, TitleBar,
+    v_flex, Icon, IconName, Root, Theme, ThemeMode, TitleBar,
 };
 use terminal::TerminalView;
 
@@ -42,7 +42,8 @@ impl Render for Example {
                     })
                     .child(
                         Tab::new()
-                            .label("/bin/bash ~")
+                            .prefix(Icon::new(IconName::SquareTerminal))
+                            .label("term ― bash")
                             .px_2()
                             .suffix(IconName::Close),
                     ),
