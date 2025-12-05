@@ -25,8 +25,9 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 
 const DEFAULT_COLS: usize = 80;
 const DEFAULT_ROWS: usize = 24;
-const DEFAULT_CELL_WIDTH: f32 = 8.0;
-const DEFAULT_CELL_HEIGHT: f32 = 18.0;
+const DEFAULT_CELL_WIDTH: f32 = 12.0;
+const DEFAULT_CELL_HEIGHT: f32 = 24.0;
+const DEFAULT_FONT_SIZE: f32 = 15.0;
 
 pub struct TerminalView {
     focus_handle: FocusHandle,
@@ -108,7 +109,7 @@ impl TerminalView {
             &SimpleDimensions::new(DEFAULT_COLS, DEFAULT_ROWS),
             proxy,
         );
-        let font_size: f32 = 15.0; //cx.theme().mono_font_size.into();
+        let font_size: f32 = DEFAULT_FONT_SIZE;
 
         let mut view = Self {
             focus_handle,
