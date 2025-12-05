@@ -793,6 +793,7 @@ const HAMI_MELON_NAMED: &[(ansi::NamedColor, u32)] = &[
     (ansi::NamedColor::BrightForeground, 0xb3b3b3ff),
     (ansi::NamedColor::DimForeground, 0x282c33ff),
     (ansi::NamedColor::Background, THEME_BG),
+    (ansi::NamedColor::Cursor, 0x5c78e2ff),
     (ansi::NamedColor::Black, 0x282c33ff),
     (ansi::NamedColor::BrightBlack, 0x525561ff),
     (ansi::NamedColor::DimBlack, 0xc8ccd4ff),
