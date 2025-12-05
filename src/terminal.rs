@@ -15,7 +15,8 @@ use futures::{channel::mpsc, StreamExt};
 use gpui::{
     canvas, div, px, rgb, AsyncApp, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
     IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, ParentElement, Render, Rgba,
-    ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, WeakEntity, Window,
+    ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, Subscription, WeakEntity,
+    Window,
 };
 use gpui_component::{h_flex, v_flex, ActiveTheme};
 use parking_lot::Mutex;
@@ -41,6 +42,7 @@ pub struct TerminalView {
     last_bounds: Option<Bounds<gpui::Pixels>>,
     title: Option<String>,
     error: Option<String>,
+    keystroke_sub: Option<Subscription>,
 }
 
 #[derive(Clone)]
@@ -121,7 +123,30 @@ impl TerminalView {
             last_bounds: None,
             title: None,
             error: None,
+            keystroke_sub: None,
         };
+
+        let focus = view.focus_handle.clone();
+        let weak = cx.entity().downgrade();
+        view.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
+            if event.keystroke.key == "tab"
+                && window
+                    .focused(cx)
+                    .is_some_and(|focused| focused.contains(&focus, window))
+            {
+                if let Some(entity) = weak.upgrade() {
+                    let _ = entity.update(cx, |view, _cx| {
+                        // Send Tab (or back-tab) directly to the PTY when the terminal is focused.
+                        if event.keystroke.modifiers.shift {
+                            view.write_bytes(b"\x1b[Z");
+                        } else {
+                            view.write_bytes(b"\t");
+                        }
+                    });
+                }
+                cx.stop_propagation();
+            }
+        }));
 
         view.spawn_message_loop(rx, cx);
         view.start_pty(tx, cx);
@@ -398,6 +423,11 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Prevent focus traversal (Root binds Tab/Shift-Tab) so Tab can flow to the PTY.
+        if event.keystroke.key == "tab" {
+            cx.stop_propagation();
+        }
+
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke) {
             self.write_bytes(&bytes);
             cx.notify();
