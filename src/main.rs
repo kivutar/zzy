@@ -10,10 +10,17 @@ use terminal::TerminalView;
 
 pub struct Example {
     terminal: Entity<TerminalView>,
+    focused_once: bool,
 }
 
 impl Render for Example {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Give focus to the terminal on first render so typing works immediately.
+        if !self.focused_once {
+            cx.focus_view(&self.terminal, window);
+            self.focused_once = true;
+        }
+
         v_flex()
             .size_full()
             .child(
@@ -75,7 +82,10 @@ fn main() {
             cx.open_window(window_options, |window, cx| {
                 let view = cx.new(|cx| {
                     let terminal = cx.new(|cx| TerminalView::new(cx));
-                    Example { terminal }
+                    Example {
+                        terminal,
+                        focused_once: false,
+                    }
                 });
                 cx.new(|cx| Root::new(view, window, cx))
             })?;
