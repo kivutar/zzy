@@ -212,6 +212,8 @@ fn main() {
         gpui_component::init(cx);
         Theme::global_mut(cx).mode = ThemeMode::Dark;
         Theme::change(ThemeMode::Dark, None, cx);
+        let border_color = Theme::global(cx).border;
+        Theme::global_mut(cx).tab_active = border_color;
         // Override the monospace font after applying the theme so it doesn't get reset.
         Theme::global_mut(cx).mono_font_family = "Adwaita Mono".into();
 
