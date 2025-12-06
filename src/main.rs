@@ -124,7 +124,7 @@ impl Render for Example {
                         .w_full()
                         .pr_2()
                         .justify_between()
-                        .child("term")
+                        .child("zedterm")
                         .child(IconName::Settings2),
                 ),
             )

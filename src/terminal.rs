@@ -8,7 +8,8 @@ use std::{
 
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
-    grid::Scroll,
+    grid::Dimensions,
+    index::{Column, Line},
     term::{cell::Flags, Config, Term},
     vte::ansi,
 };
@@ -18,8 +19,8 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     canvas, div, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, FontWeight,
     InteractiveElement, IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    ParentElement, Render, Rgba, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window,
+    ParentElement, Render, Rgba, ScrollHandle, StatefulInteractiveElement, Styled, Subscription,
+    WeakEntity, Window,
 };
 use gpui_component::{h_flex, v_flex, ActiveTheme};
 use parking_lot::Mutex;
@@ -43,6 +44,7 @@ pub struct TerminalView {
     font_size: f32,
     cell_width: f32,
     cell_height: f32,
+    scroll_handle: ScrollHandle,
     last_bounds: Option<Bounds<gpui::Pixels>>,
     title: Option<String>,
     error: Option<String>,
@@ -101,11 +103,15 @@ impl TerminalView {
         let (tx, rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx: tx.clone() };
         let term = Term::new(
-            Config::default(),
+            Config {
+                scrolling_history: 1000,
+                ..Config::default()
+            },
             &SimpleDimensions::new(DEFAULT_COLS, DEFAULT_ROWS),
             proxy,
         );
         let font_size: f32 = DEFAULT_FONT_SIZE;
+        let scroll_handle = ScrollHandle::new();
 
         let mut view = Self {
             focus_handle,
@@ -119,6 +125,7 @@ impl TerminalView {
             font_size,
             cell_width: DEFAULT_CELL_WIDTH,
             cell_height: DEFAULT_CELL_HEIGHT,
+            scroll_handle,
             last_bounds: None,
             title: None,
             error: None,
@@ -274,8 +281,12 @@ impl TerminalView {
     fn handle_msg(&mut self, msg: TerminalMsg, cx: &mut Context<Self>) {
         match msg {
             TerminalMsg::Output(bytes) => {
+                let stick_to_bottom = self.is_scrolled_to_bottom();
                 self.parser.advance(&mut self.term, &bytes);
                 self.cursor_visible = true;
+                if stick_to_bottom {
+                    self.scroll_handle.scroll_to_bottom();
+                }
                 cx.notify();
             }
             TerminalMsg::Event(event) => self.handle_event(event, cx),
@@ -360,10 +371,24 @@ impl TerminalView {
         })
     }
 
-    fn visible_segments(&self) -> (Vec<Vec<CellRender>>, Palette) {
+    fn is_scrolled_to_bottom(&self) -> bool {
+        let offset = self.scroll_handle.offset();
+        let offset_y: f32 = offset.y.into();
+        let max_offset = self.scroll_handle.max_offset();
+        let max_y: f32 = (-max_offset.height).into();
+
+        (offset_y - max_y).abs() < 1.0 || offset_y < max_y
+    }
+
+    fn buffer_segments(&self) -> (Vec<Vec<CellRender>>, Palette) {
         let content = self.term.renderable_content();
         let palette = Palette::new(content.colors);
         let cursor = content.cursor;
+        let grid_ref = self.term.grid();
+        let total_lines = grid_ref.total_lines();
+        let screen_lines = grid_ref.screen_lines();
+        let history_size = total_lines.saturating_sub(screen_lines);
+        let cols = grid_ref.columns();
 
         let mut grid = vec![
             vec![
@@ -374,47 +399,40 @@ impl TerminalView {
                     is_cursor: false,
                     is_bold: false,
                 };
-                self.cols
+                cols
             ];
-            self.rows
+            total_lines
         ];
 
-        for cell in content.display_iter {
-            let line = cell.point.line.0;
-            if line < 0 {
-                continue;
-            }
-            let line_idx = line as usize;
-            if line_idx >= self.rows {
-                continue;
-            }
-            let col = cell.point.column.0 as usize;
-            if col >= self.cols {
-                continue;
-            }
-
-            if cell.cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                continue;
-            }
-
-            let mut ch = String::new();
-            ch.push(cell.cell.c);
-            if let Some(extra) = cell.cell.zerowidth() {
-                for c in extra {
-                    ch.push(*c);
+        for line_idx in 0..total_lines {
+            let grid_line = Line(line_idx as i32 - history_size as i32);
+            for col_idx in 0..cols {
+                let cell = &grid_ref[grid_line][Column(col_idx)];
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
                 }
-            }
 
-            let (fg, bg) = palette.fg_bg(&cell.cell);
-            let is_cursor = cursor.point == cell.point;
-            let is_bold = cell.cell.flags.contains(Flags::BOLD);
-            grid[line_idx][col] = CellRender {
-                text: ch,
-                fg,
-                bg,
-                is_cursor,
-                is_bold,
-            };
+                let mut ch = String::new();
+                ch.push(cell.c);
+                if let Some(extra) = cell.zerowidth() {
+                    for c in extra {
+                        ch.push(*c);
+                    }
+                }
+
+                let (fg, bg) = palette.fg_bg(cell);
+                let is_cursor = cursor.point.line == grid_line
+                    && cursor.point.column == Column(col_idx)
+                    && cursor.shape != ansi::CursorShape::Hidden;
+                let is_bold = cell.flags.contains(Flags::BOLD);
+                grid[line_idx][col_idx] = CellRender {
+                    text: ch,
+                    fg,
+                    bg,
+                    is_cursor,
+                    is_bold,
+                };
+            }
         }
 
         let segments = grid
@@ -469,27 +487,6 @@ impl TerminalView {
         }
     }
 
-    fn handle_scroll(
-        &mut self,
-        event: &ScrollWheelEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let lines = match event.delta {
-            ScrollDelta::Lines(delta) => delta.y as isize,
-            ScrollDelta::Pixels(delta) => {
-                let dy: f32 = delta.y.into();
-                (dy / self.cell_height).round() as isize
-            }
-        };
-
-        if lines != 0 {
-            let clamped = lines.clamp(i32::MIN as isize, i32::MAX as isize) as i32;
-            self.term.scroll_display(Scroll::Delta(clamped));
-            cx.notify();
-        }
-    }
-
     fn focus_on_click(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus_handle);
         cx.notify();
@@ -499,7 +496,7 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let error = self.error.clone();
-        let (segments_by_line, palette) = self.visible_segments();
+        let (segments_by_line, palette) = self.buffer_segments();
 
         let view = cx.entity();
         div()
@@ -513,11 +510,12 @@ impl Render for TerminalView {
             .line_height(px(self.cell_height))
             .whitespace_nowrap()
             .cursor_text()
-            .overflow_scroll()
+            .overflow_y_scroll()
+            .scrollbar_width(px(8.0))
+            .track_scroll(&self.scroll_handle)
             .track_focus(&self.focus_handle)
             .focusable()
             .on_key_down(cx.listener(Self::handle_key_down))
-            .on_scroll_wheel(cx.listener(Self::handle_scroll))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::focus_on_click))
             .child(
                 canvas(
