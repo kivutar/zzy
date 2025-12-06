@@ -14,11 +14,12 @@ use alacritty_terminal::{
 use anyhow::Context as _;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    canvas, div, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, ParentElement, Render, Rgba,
-    ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, Subscription, WeakEntity,
-    Window,
+    canvas, div, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, FontWeight,
+    InteractiveElement, IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    ParentElement, Render, Rgba, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled,
+    Subscription, WeakEntity, Window,
 };
+use gpui::prelude::FluentBuilder as _;
 use gpui_component::{h_flex, v_flex, ActiveTheme};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -54,6 +55,7 @@ struct CellRender {
     fg: Rgba,
     bg: Rgba,
     is_cursor: bool,
+    is_bold: bool,
 }
 
 struct Palette {
@@ -376,6 +378,7 @@ impl TerminalView {
                     fg: palette.default_fg,
                     bg: palette.default_bg,
                     is_cursor: false,
+                    is_bold: false,
                 };
                 self.cols
             ];
@@ -410,11 +413,13 @@ impl TerminalView {
 
             let (fg, bg) = palette.fg_bg(&cell.cell);
             let is_cursor = cursor.point == cell.point;
+            let is_bold = cell.cell.flags.contains(Flags::BOLD);
             grid[line_idx][col] = CellRender {
                 text: ch,
                 fg,
                 bg,
                 is_cursor,
+                is_bold,
             };
         }
 
@@ -426,7 +431,10 @@ impl TerminalView {
 
                 for cell in row {
                     if let Some(seg) = &mut current {
-                        if seg.fg == cell.fg && seg.bg == cell.bg && seg.is_cursor == cell.is_cursor
+                        if seg.fg == cell.fg
+                            && seg.bg == cell.bg
+                            && seg.is_cursor == cell.is_cursor
+                            && seg.is_bold == cell.is_bold
                         {
                             seg.text.push_str(&cell.text);
                         } else {
@@ -557,6 +565,7 @@ impl Render for TerminalView {
                         line_row = line_row.child(
                             div()
                                 .whitespace_nowrap()
+                                .when(seg.is_bold, |this| this.font_weight(FontWeight::BOLD))
                                 .text_color(if show_cursor {
                                     palette.cursor_color()
                                 } else {
