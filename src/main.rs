@@ -4,25 +4,73 @@ mod terminal;
 use gpui::*;
 use gpui_component::ActiveTheme;
 use gpui_component::{
+    button::{Button, ButtonVariants as _},
     h_flex,
     tab::{Tab, TabBar},
-    v_flex, Icon, IconName, Root, Theme, ThemeMode, TitleBar,
+    v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
 };
 use terminal::TerminalView;
 
 pub struct Example {
+    tabs: Vec<TerminalTab>,
+    selected_index: usize,
+    focus_pending: bool,
+}
+
+struct TerminalTab {
     terminal: Entity<TerminalView>,
-    focused_once: bool,
+    label: String,
+}
+
+impl Example {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let mut example = Self {
+            tabs: Vec::new(),
+            selected_index: 0,
+            focus_pending: true,
+        };
+        example.add_tab(cx);
+        example
+    }
+
+    fn add_tab(&mut self, cx: &mut Context<Self>) {
+        let terminal = cx.new(|cx| TerminalView::new(cx));
+        self.tabs.push(TerminalTab {
+            terminal,
+            label: format!("term — bash"),
+        });
+        self.selected_index = self.tabs.len() - 1;
+        self.focus_pending = true;
+        cx.notify();
+    }
+
+    fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.tabs.len() {
+            self.selected_index = index;
+            self.focus_pending = true;
+            cx.notify();
+        }
+    }
+
+    fn selected_terminal(&self) -> Option<&Entity<TerminalView>> {
+        self.tabs.get(self.selected_index).map(|tab| &tab.terminal)
+    }
 }
 
 impl Render for Example {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Give focus to the terminal on first render so typing works immediately.
-        if !self.focused_once {
-            cx.focus_view(&self.terminal, window);
-            self.focused_once = true;
+        if self.tabs.is_empty() {
+            return v_flex().child("No tabs");
         }
 
+        if self.focus_pending {
+            if let Some(terminal) = self.selected_terminal() {
+                cx.focus_view(terminal, window);
+            }
+            self.focus_pending = false;
+        }
+
+        let view = cx.entity();
         v_flex()
             .size_full()
             .child(
@@ -38,17 +86,44 @@ impl Render for Example {
             )
             .child(
                 TabBar::new("tabs")
-                    .selected_index(0)
-                    .on_click(|selected_index, _, _| {
-                        println!("Tab {} selected", selected_index);
+                    .w_full()
+                    .selected_index(self.selected_index)
+                    .on_click({
+                        let view = view.clone();
+                        move |selected_index, window, cx| {
+                            let view = view.clone();
+                            let _ = view.update(cx, |example, cx| {
+                                example.select_tab(*selected_index, cx);
+                                if let Some(terminal) = example.selected_terminal() {
+                                    cx.focus_view(terminal, window);
+                                }
+                            });
+                        }
                     })
-                    .child(
+                    .suffix({
+                        let view = view.clone();
+                        Button::new("add-tab")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Plus)
+                            .tab_stop(false)
+                            .on_click(move |_, window, cx| {
+                                let view = view.clone();
+                                let _ = view.update(cx, |example, cx| {
+                                    example.add_tab(cx);
+                                    if let Some(terminal) = example.selected_terminal() {
+                                        cx.focus_view(terminal, window);
+                                    }
+                                });
+                            })
+                    })
+                    .children(self.tabs.iter().map(|tab| {
                         Tab::new()
                             .prefix(Icon::new(IconName::SquareTerminal))
-                            .label("term ― bash")
+                            .label(tab.label.clone())
                             .px_2()
-                            .suffix(IconName::Close),
-                    ),
+                            .suffix(IconName::Close)
+                    })),
             )
             .child(
                 v_flex()
@@ -61,7 +136,9 @@ impl Render for Example {
                     .items_start()
                     .justify_start()
                     .overflow_hidden()
-                    .child(AnyView::from(self.terminal.clone())),
+                    .child(AnyView::from(
+                        self.tabs[self.selected_index].terminal.clone(),
+                    )),
             )
     }
 }
@@ -87,13 +164,7 @@ fn main() {
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
-                let view = cx.new(|cx| {
-                    let terminal = cx.new(|cx| TerminalView::new(cx));
-                    Example {
-                        terminal,
-                        focused_once: false,
-                    }
-                });
+                let view = cx.new(|cx| Example::new(cx));
                 cx.new(|cx| Root::new(view, window, cx))
             })?;
 
