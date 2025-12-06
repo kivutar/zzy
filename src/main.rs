@@ -15,6 +15,7 @@ pub struct Example {
     tabs: Vec<TerminalTab>,
     selected_index: usize,
     focus_pending: bool,
+    keystroke_sub: Option<Subscription>,
 }
 
 struct TerminalTab {
@@ -28,7 +29,27 @@ impl Example {
             tabs: Vec::new(),
             selected_index: 0,
             focus_pending: true,
+            keystroke_sub: None,
         };
+
+        let view = cx.entity().downgrade();
+        example.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
+            if event.keystroke.modifiers.control
+                && event.keystroke.modifiers.shift
+                && event.keystroke.key.eq_ignore_ascii_case("t")
+            {
+                if let Some(view) = view.upgrade() {
+                    let _ = view.update(cx, |example, cx| {
+                        example.add_tab(cx);
+                        if let Some(terminal) = example.selected_terminal() {
+                            cx.focus_view(terminal, window);
+                        }
+                    });
+                }
+                cx.stop_propagation();
+            }
+        }));
+
         example.add_tab(cx);
         example
     }
