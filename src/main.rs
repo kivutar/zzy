@@ -6,6 +6,7 @@ use gpui_component::{
     tab::{Tab, TabBar},
     v_flex, Icon, IconName, Root, Theme, ThemeMode, TitleBar,
 };
+use gpui_component::ActiveTheme;
 use terminal::TerminalView;
 
 pub struct Example {
@@ -42,6 +43,7 @@ impl Render for Example {
                     })
                     .child(
                         Tab::new()
+                            .bg(cx.theme().secondary)
                             .prefix(Icon::new(IconName::SquareTerminal))
                             .label("term ― bash")
                             .px_2()
@@ -51,12 +53,14 @@ impl Render for Example {
             .child(
                 v_flex()
                     .id("window-body")
+                    .bg(cx.theme().secondary)
                     .flex_1()
                     .w_full()
                     .h_full()
                     .p_2()
                     .items_start()
                     .justify_start()
+                    .overflow_hidden()
                     .child(AnyView::from(self.terminal.clone())),
             )
     }

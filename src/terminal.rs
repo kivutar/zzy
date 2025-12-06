@@ -502,6 +502,7 @@ impl Render for TerminalView {
         let view = cx.entity();
         div()
             .id("terminal-view")
+            .bg(cx.theme().secondary)
             .flex_1()
             .w_full()
             .h_full()
