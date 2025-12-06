@@ -1,5 +1,6 @@
 use crate::colors::Palette;
 use std::{
+    ffi::OsString,
     io::{Read, Write},
     path::Path,
     sync::Arc,
@@ -214,6 +215,10 @@ impl TerminalView {
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut cmd = CommandBuilder::new(shell);
+        // When the app is launched from a desktop launcher, TERM is usually missing.
+        // Provide a sensible default so tools like git/less do not warn about a
+        // non-functional terminal.
+        cmd.env("TERM", normalize_term_env(std::env::var_os("TERM")));
         if let Ok(cwd) = std::env::current_dir() {
             cmd.cwd(cwd);
         }
@@ -652,6 +657,13 @@ impl EventListener for TerminalEventProxy {
     }
 }
 
+fn normalize_term_env(term: Option<OsString>) -> OsString {
+    match term {
+        Some(value) if !value.is_empty() => value,
+        _ => OsString::from("xterm-256color"),
+    }
+}
+
 fn keystroke_to_bytes(keystroke: &Keystroke) -> Option<Vec<u8>> {
     if let Some(text) = &keystroke.key_char {
         return Some(text.clone().into_bytes());
@@ -680,5 +692,27 @@ fn keystroke_to_bytes(keystroke: &Keystroke) -> Option<Vec<u8>> {
         "pagedown" => Some(b"\x1b[6~".to_vec()),
         "delete" => Some(b"\x1b[3~".to_vec()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_missing_term() {
+        assert_eq!(normalize_term_env(None), OsString::from("xterm-256color"));
+        assert_eq!(
+            normalize_term_env(Some(OsString::from(""))),
+            OsString::from("xterm-256color")
+        );
+    }
+
+    #[test]
+    fn preserves_existing_term() {
+        assert_eq!(
+            normalize_term_env(Some(OsString::from("alacritty"))),
+            OsString::from("alacritty")
+        );
     }
 }

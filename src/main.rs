@@ -39,8 +39,8 @@ impl ZedTerm {
             {
                 if let Some(view) = view.upgrade() {
                     let _ = view.update(cx, |zedterm, cx| {
-                    zedterm.add_tab(cx);
-                    if let Some(terminal) = zedterm.selected_terminal() {
+                        zedterm.add_tab(cx);
+                        if let Some(terminal) = zedterm.selected_terminal() {
                             cx.focus_view(terminal, window);
                         }
                     });
