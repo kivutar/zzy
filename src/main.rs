@@ -1,12 +1,13 @@
+mod colors;
 mod terminal;
 
 use gpui::*;
+use gpui_component::ActiveTheme;
 use gpui_component::{
     h_flex,
     tab::{Tab, TabBar},
     v_flex, Icon, IconName, Root, Theme, ThemeMode, TitleBar,
 };
-use gpui_component::ActiveTheme;
 use terminal::TerminalView;
 
 pub struct Example {
@@ -31,7 +32,7 @@ impl Render for Example {
                         .w_full()
                         .pr_2()
                         .justify_between()
-                        .child("Terminal")
+                        .child("term")
                         .child(IconName::Settings2),
                 ),
             )
@@ -43,7 +44,6 @@ impl Render for Example {
                     })
                     .child(
                         Tab::new()
-                            .bg(cx.theme().secondary)
                             .prefix(Icon::new(IconName::SquareTerminal))
                             .label("term ― bash")
                             .px_2()
