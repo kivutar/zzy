@@ -52,6 +52,31 @@ impl Example {
         }
     }
 
+    fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+
+        let selected_before = self.selected_index;
+        self.tabs.remove(index);
+
+        if self.tabs.is_empty() {
+            self.selected_index = 0;
+            self.focus_pending = false;
+            cx.notify();
+            return;
+        }
+
+        if selected_before > index {
+            self.selected_index = selected_before - 1;
+        } else if selected_before >= self.tabs.len() {
+            self.selected_index = self.tabs.len() - 1;
+        }
+
+        self.focus_pending = true;
+        cx.notify();
+    }
+
     fn selected_terminal(&self) -> Option<&Entity<TerminalView>> {
         self.tabs.get(self.selected_index).map(|tab| &tab.terminal)
     }
@@ -117,12 +142,29 @@ impl Render for Example {
                                 });
                             })
                     })
-                    .children(self.tabs.iter().map(|tab| {
+                    .children(self.tabs.iter().enumerate().map(|(index, tab)| {
+                        let close_view = view.clone();
                         Tab::new()
                             .prefix(Icon::new(IconName::SquareTerminal))
                             .label(tab.label.clone())
                             .px_2()
-                            .suffix(IconName::Close)
+                            .suffix(
+                                Button::new(("close-tab", index as u32))
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::Close)
+                                    .tab_stop(false)
+                                    .on_click(move |_, window, cx| {
+                                        cx.stop_propagation();
+                                        let view = close_view.clone();
+                                        let _ = view.update(cx, |example, cx| {
+                                            example.close_tab(index, cx);
+                                            if let Some(terminal) = example.selected_terminal() {
+                                                cx.focus_view(terminal, window);
+                                            }
+                                        });
+                                    }),
+                            )
                     })),
             )
             .child(
