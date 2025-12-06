@@ -538,6 +538,20 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.keystroke.key.eq_ignore_ascii_case("v")
+            && event.keystroke.modifiers.control
+            && event.keystroke.modifiers.shift
+        {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    self.cursor_visible = true;
+                    self.write_bytes(text.as_bytes());
+                }
+            }
+            cx.stop_propagation();
+            return;
+        }
+
         // Prevent focus traversal (Root binds Tab/Shift-Tab) so Tab can flow to the PTY.
         if event.keystroke.key == "tab" {
             cx.stop_propagation();
