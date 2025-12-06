@@ -19,10 +19,10 @@ use anyhow::Context as _;
 use futures::{channel::mpsc, StreamExt};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    canvas, div, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, FontWeight,
+    canvas, div, font, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, FontWeight, Hsla,
     InteractiveElement, IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    ParentElement, Render, Rgba, ScrollHandle, StatefulInteractiveElement, Styled, Subscription,
-    WeakEntity, Window,
+    ParentElement, Render, Rgba, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, TextRun, WeakEntity, Window,
 };
 use gpui_component::{h_flex, v_flex, ActiveTheme};
 use parking_lot::Mutex;
@@ -53,6 +53,7 @@ pub struct TerminalView {
     error: Option<String>,
     keystroke_sub: Option<Subscription>,
     cursor_visible: bool,
+    cell_metrics_measured: bool,
 }
 
 #[derive(Clone)]
@@ -141,6 +142,7 @@ impl TerminalView {
             error: None,
             keystroke_sub: None,
             cursor_visible: true,
+            cell_metrics_measured: false,
         };
 
         let focus = view.focus_handle.clone();
@@ -334,6 +336,44 @@ impl TerminalView {
         cx.notify();
     }
 
+    fn update_cell_metrics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cell_metrics_measured {
+            return;
+        }
+
+        let text: SharedString = "W".into();
+        let runs = vec![TextRun {
+            len: text.len(),
+            font: font(cx.theme().mono_font_family.clone()),
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+
+        if let Ok(lines) =
+            window
+                .text_system()
+                .shape_text(text, px(self.font_size), &runs, None, None)
+        {
+            if let Some(line) = lines.first() {
+                let measured_width: f32 = line.width().into();
+                let ascent: f32 = line.ascent().into();
+                let descent: f32 = line.descent().into();
+                let measured_height = ascent + descent;
+
+                if measured_width > 0.0 {
+                    self.cell_width = measured_width;
+                }
+                if measured_height > 0.0 {
+                    self.cell_height = measured_height;
+                }
+
+                self.cell_metrics_measured = true;
+            }
+        }
+    }
+
     fn write_bytes(&self, bytes: &[u8]) {
         if let Some(writer) = &self.writer {
             let _ = writer.lock().write_all(bytes);
@@ -517,7 +557,9 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.update_cell_metrics(window, cx);
+
         let error = self.error.clone();
         let (segments_by_line, palette) = self.buffer_segments();
         let scrollbar = {
