@@ -11,7 +11,7 @@ use gpui_component::{
 };
 use terminal::TerminalView;
 
-pub struct Example {
+pub struct ZedTerm {
     tabs: Vec<TerminalTab>,
     selected_index: usize,
     focus_pending: bool,
@@ -22,9 +22,9 @@ struct TerminalTab {
     terminal: Entity<TerminalView>,
 }
 
-impl Example {
+impl ZedTerm {
     fn new(cx: &mut Context<Self>) -> Self {
-        let mut example = Self {
+        let mut zedterm = Self {
             tabs: Vec::new(),
             selected_index: 0,
             focus_pending: true,
@@ -32,15 +32,15 @@ impl Example {
         };
 
         let view = cx.entity().downgrade();
-        example.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
+        zedterm.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
             if event.keystroke.modifiers.control
                 && event.keystroke.modifiers.shift
                 && event.keystroke.key.eq_ignore_ascii_case("t")
             {
                 if let Some(view) = view.upgrade() {
-                    let _ = view.update(cx, |example, cx| {
-                        example.add_tab(cx);
-                        if let Some(terminal) = example.selected_terminal() {
+                    let _ = view.update(cx, |zedterm, cx| {
+                    zedterm.add_tab(cx);
+                    if let Some(terminal) = zedterm.selected_terminal() {
                             cx.focus_view(terminal, window);
                         }
                     });
@@ -49,13 +49,13 @@ impl Example {
             }
         }));
 
-        example.add_tab(cx);
-        example
+        zedterm.add_tab(cx);
+        zedterm
     }
 
     fn add_tab(&mut self, cx: &mut Context<Self>) {
         let terminal = cx.new(|cx| TerminalView::new(cx));
-        cx.observe(&terminal, |_example, _terminal, cx| {
+        cx.observe(&terminal, |_zedterm, _terminal, cx| {
             // Propagate terminal changes (e.g., title updates) to the tab bar.
             cx.notify();
         })
@@ -102,7 +102,7 @@ impl Example {
     }
 }
 
-impl Render for Example {
+impl Render for ZedTerm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.tabs.is_empty() {
             return v_flex().child("No tabs");
@@ -137,9 +137,9 @@ impl Render for Example {
                         let view = view.clone();
                         move |selected_index, window, cx| {
                             let view = view.clone();
-                            let _ = view.update(cx, |example, cx| {
-                                example.select_tab(*selected_index, cx);
-                                if let Some(terminal) = example.selected_terminal() {
+                            let _ = view.update(cx, |zedterm, cx| {
+                                zedterm.select_tab(*selected_index, cx);
+                                if let Some(terminal) = zedterm.selected_terminal() {
                                     cx.focus_view(terminal, window);
                                 }
                             });
@@ -155,9 +155,9 @@ impl Render for Example {
                             .tab_stop(false)
                             .on_click(move |_, window, cx| {
                                 let view = view.clone();
-                                let _ = view.update(cx, |example, cx| {
-                                    example.add_tab(cx);
-                                    if let Some(terminal) = example.selected_terminal() {
+                                let _ = view.update(cx, |zedterm, cx| {
+                                    zedterm.add_tab(cx);
+                                    if let Some(terminal) = zedterm.selected_terminal() {
                                         cx.focus_view(terminal, window);
                                     }
                                 });
@@ -179,9 +179,9 @@ impl Render for Example {
                                     .on_click(move |_, window, cx| {
                                         cx.stop_propagation();
                                         let view = close_view.clone();
-                                        let _ = view.update(cx, |example, cx| {
-                                            example.close_tab(index, cx);
-                                            if let Some(terminal) = example.selected_terminal() {
+                                        let _ = view.update(cx, |zedterm, cx| {
+                                            zedterm.close_tab(index, cx);
+                                            if let Some(terminal) = zedterm.selected_terminal() {
                                                 cx.focus_view(terminal, window);
                                             }
                                         });
@@ -230,7 +230,7 @@ fn main() {
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
-                let view = cx.new(|cx| Example::new(cx));
+                let view = cx.new(|cx| ZedTerm::new(cx));
                 cx.new(|cx| Root::new(view, window, cx))
             })?;
 

@@ -1,8 +1,8 @@
 [package]
-name = "term"
+name = "zedterm"
 version = "0.1.0"
 edition = "2021"
-description = "GPUI terminal test"
+description = "GPUI based terminal emulator"
 publish = false
 
 [dependencies]
@@ -14,6 +14,3 @@ gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", 
 alacritty_terminal = "0.25.1"
 parking_lot = "0.12.5"
 futures = "0.3"
-
-[lints]
-# optional: remove this if unused
