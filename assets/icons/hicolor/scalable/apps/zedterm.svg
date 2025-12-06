@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="128"
+   height="128"
+   viewBox="0 0 128 128"
+   role="img"
+   aria-label="ZedTerm icon"
+   version="1.1"
+   id="svg8"
+   sodipodi:docname="zedterm.svg"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview8"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="3.359375"
+     inkscape:cx="64"
+     inkscape:cy="64"
+     inkscape:window-width="1136"
+     inkscape:window-height="683"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg8" />
+  <defs
+     id="defs4">
+    <linearGradient
+       id="bg"
+       x1="0%"
+       y1="0%"
+       x2="100%"
+       y2="100%">
+      <stop
+         offset="0%"
+         stop-color="#24354f"
+         id="stop1" />
+      <stop
+         offset="1"
+         stop-color="#0d1325"
+         id="stop2"
+         style="stop-color:#282c33;stop-opacity:1;" />
+    </linearGradient>
+    <linearGradient
+       id="accent"
+       x1="0%"
+       y1="0%"
+       x2="100%"
+       y2="0%">
+      <stop
+         offset="0"
+         stop-color="#3dd6a7"
+         id="stop3"
+         style="stop-color:#88b292;stop-opacity:1;" />
+      <stop
+         offset="1"
+         stop-color="#5ec8f0"
+         id="stop4"
+         style="stop-color:#7490be;stop-opacity:1;" />
+    </linearGradient>
+  </defs>
+  <rect
+     x="8"
+     y="8"
+     width="112"
+     height="112"
+     rx="18"
+     fill="url(#bg)"
+     id="rect4" />
+  <polyline
+     points="34,60 54,72 34,84"
+     fill="none"
+     stroke="url(#accent)"
+     stroke-width="6"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     id="polyline8" />
+  <rect
+     x="65.869766"
+     y="81.57209"
+     width="29.618605"
+     height="5.9162788"
+     rx="3.7023256"
+     fill="#eef5ff"
+     opacity="0.75"
+     id="rect8"
+     style="stroke-width:0.827345;fill:#c8ccd4;fill-opacity:1" />
+</svg>
