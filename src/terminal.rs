@@ -1,6 +1,7 @@
 use crate::colors::Palette;
 use std::{
     io::{Read, Write},
+    path::Path,
     sync::Arc,
     thread,
     time::Duration,
@@ -45,6 +46,7 @@ pub struct TerminalView {
     cell_width: f32,
     cell_height: f32,
     scroll_handle: ScrollHandle,
+    program_name: String,
     last_bounds: Option<Bounds<gpui::Pixels>>,
     title: Option<String>,
     error: Option<String>,
@@ -112,6 +114,12 @@ impl TerminalView {
         );
         let font_size: f32 = DEFAULT_FONT_SIZE;
         let scroll_handle = ScrollHandle::new();
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let program_name = Path::new(&shell)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("shell")
+            .to_string();
 
         let mut view = Self {
             focus_handle,
@@ -126,6 +134,7 @@ impl TerminalView {
             cell_width: DEFAULT_CELL_WIDTH,
             cell_height: DEFAULT_CELL_HEIGHT,
             scroll_handle,
+            program_name,
             last_bounds: None,
             title: None,
             error: None,
@@ -369,6 +378,15 @@ impl TerminalView {
             cell_width: self.cell_width as u16,
             cell_height: self.cell_height as u16,
         })
+    }
+
+    pub fn tab_title(&self) -> String {
+        let program = self
+            .title
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.program_name);
+        program.to_string()
     }
 
     fn is_scrolled_to_bottom(&self) -> bool {

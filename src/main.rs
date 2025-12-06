@@ -20,7 +20,6 @@ pub struct Example {
 
 struct TerminalTab {
     terminal: Entity<TerminalView>,
-    label: String,
 }
 
 impl Example {
@@ -56,10 +55,12 @@ impl Example {
 
     fn add_tab(&mut self, cx: &mut Context<Self>) {
         let terminal = cx.new(|cx| TerminalView::new(cx));
-        self.tabs.push(TerminalTab {
-            terminal,
-            label: format!("term — bash"),
-        });
+        cx.observe(&terminal, |_example, _terminal, cx| {
+            // Propagate terminal changes (e.g., title updates) to the tab bar.
+            cx.notify();
+        })
+        .detach();
+        self.tabs.push(TerminalTab { terminal });
         self.selected_index = self.tabs.len() - 1;
         self.focus_pending = true;
         cx.notify();
@@ -164,9 +165,10 @@ impl Render for Example {
                     })
                     .children(self.tabs.iter().enumerate().map(|(index, tab)| {
                         let close_view = view.clone();
+                        let label = tab.terminal.read(cx).tab_title();
                         Tab::new()
                             .prefix(Icon::new(IconName::SquareTerminal))
-                            .label(tab.label.clone())
+                            .label(label)
                             .px_2()
                             .suffix(
                                 Button::new(("close-tab", index as u32))
