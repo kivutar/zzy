@@ -497,40 +497,76 @@ impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let error = self.error.clone();
         let (segments_by_line, palette) = self.buffer_segments();
+        let scrollbar = {
+            let max_offset = self.scroll_handle.max_offset();
+            self.last_bounds.and_then(|bounds| {
+                let viewport_height: f32 = bounds.size.height.into();
+                let scroll_max: f32 = max_offset.height.into();
+                if scroll_max <= 0.5 || viewport_height <= 0.5 {
+                    return None;
+                }
+
+                let content_height = viewport_height + scroll_max;
+                let thumb_height = (viewport_height / content_height * viewport_height)
+                    .clamp(20.0, viewport_height);
+                let track_height = (viewport_height - thumb_height).max(0.0);
+                let offset_y: f32 = (-self.scroll_handle.offset().y).into();
+                let progress = (offset_y / scroll_max).clamp(0.0, 1.0);
+                let top = progress * track_height;
+
+                Some(
+                    div()
+                        .absolute()
+                        .right(px(-4.0))
+                        .top(px(top))
+                        .w(px(8.0))
+                        .h(px(thumb_height))
+                        .rounded(px(4.0))
+                        .bg(cx.theme().border.alpha(0.65)),
+                )
+            })
+        };
 
         let view = cx.entity();
-        div()
+        let mut container = div()
             .id("terminal-view")
             .bg(cx.theme().secondary)
             .flex_1()
             .w_full()
             .h_full()
-            .font_family(cx.theme().mono_font_family.clone())
-            .text_size(px(self.font_size))
-            .line_height(px(self.cell_height))
-            .whitespace_nowrap()
-            .cursor_text()
-            .overflow_y_scroll()
-            .scrollbar_width(px(8.0))
-            .track_scroll(&self.scroll_handle)
+            .relative()
             .track_focus(&self.focus_handle)
             .focusable()
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::focus_on_click))
-            .child(
-                canvas(
-                    {
-                        let view = view.clone();
-                        move |bounds, _, cx| {
-                            let _ = view.update(cx, |view, cx| view.record_bounds(bounds, cx));
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
             .child({
+                let scroll_area = div()
+                    .id("terminal-scroll")
+                    .w_full()
+                    .h_full()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_size(px(self.font_size))
+                    .line_height(px(self.cell_height))
+                    .whitespace_nowrap()
+                    .cursor_text()
+                    .overflow_y_scroll()
+                    .scrollbar_width(px(8.0))
+                    .track_scroll(&self.scroll_handle)
+                    .child(
+                        canvas(
+                            {
+                                let view = view.clone();
+                                move |bounds, _, cx| {
+                                    let _ =
+                                        view.update(cx, |view, cx| view.record_bounds(bounds, cx));
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    );
+
                 let mut lines_view = v_flex().id("terminal-lines").w_full();
                 if let Some(err) = error {
                     lines_view = lines_view.child(
@@ -574,8 +610,15 @@ impl Render for TerminalView {
 
                     lines_view = lines_view.child(line_row);
                 }
-                lines_view
-            })
+
+                scroll_area.child(lines_view)
+            });
+
+        if let Some(scrollbar) = scrollbar {
+            container = container.child(scrollbar);
+        }
+
+        container
     }
 }
 
