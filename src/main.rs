@@ -61,9 +61,7 @@ impl Example {
         self.tabs.remove(index);
 
         if self.tabs.is_empty() {
-            self.selected_index = 0;
-            self.focus_pending = false;
-            cx.notify();
+            cx.quit();
             return;
         }
 
