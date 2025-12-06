@@ -128,6 +128,7 @@ impl Render for Example {
                         Button::new("add-tab")
                             .ghost()
                             .xsmall()
+                            .mr_2()
                             .icon(IconName::Plus)
                             .tab_stop(false)
                             .on_click(move |_, window, cx| {
