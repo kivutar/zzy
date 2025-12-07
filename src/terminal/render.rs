@@ -183,7 +183,7 @@ impl Render for TerminalView {
                     .id("terminal-scroll")
                     .w_full()
                     .h_full()
-                    .font_family(cx.theme().mono_font_family.clone())
+                    .font_family(self.font_family.clone())
                     .text_size(px(self.font_size))
                     .line_height(px(self.cell_height))
                     .whitespace_nowrap()
@@ -214,7 +214,7 @@ impl Render for TerminalView {
                             .whitespace_nowrap()
                             .text_size(px(self.font_size))
                             .line_height(px(self.cell_height))
-                            .font_family(cx.theme().mono_font_family.clone())
+                            .font_family(self.font_family.clone())
                             .child(err),
                     );
                 }
@@ -227,7 +227,7 @@ impl Render for TerminalView {
                         .whitespace_nowrap()
                         .text_size(px(self.font_size))
                         .line_height(px(self.cell_height))
-                        .font_family(cx.theme().mono_font_family.clone());
+                        .font_family(self.font_family.clone());
 
                     for seg in segments {
                         let show_cursor = seg.is_cursor && self.cursor_visible;

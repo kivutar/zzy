@@ -15,7 +15,6 @@ use gpui::{
     font, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, Hsla, Rgba, ScrollHandle,
     SharedString, Subscription, TextRun, WeakEntity, Window,
 };
-use gpui_component::ActiveTheme;
 use parking_lot::Mutex;
 use portable_pty::{Child, MasterPty};
 pub use render::DEFAULT_FONT_SIZE;
@@ -31,6 +30,7 @@ pub struct TerminalView {
     rows: usize,
     cols: usize,
     font_size: f32,
+    font_family: SharedString,
     cell_width: f32,
     cell_height: f32,
     scroll_handle: ScrollHandle,
@@ -132,6 +132,7 @@ impl TerminalView {
             proxy,
         );
         let font_size: f32 = settings.font_size;
+        let font_family = settings.font_family.clone();
         let scroll_handle = ScrollHandle::new();
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let program_name = Path::new(&shell)
@@ -150,6 +151,7 @@ impl TerminalView {
             rows: render::DEFAULT_ROWS,
             cols: render::DEFAULT_COLS,
             font_size,
+            font_family,
             cell_width: render::DEFAULT_CELL_WIDTH,
             cell_height: render::DEFAULT_CELL_HEIGHT,
             scroll_handle,
@@ -270,7 +272,7 @@ impl TerminalView {
         .detach();
     }
 
-    fn update_cell_metrics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_cell_metrics(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
         if self.cell_metrics_measured {
             return;
         }
@@ -278,7 +280,7 @@ impl TerminalView {
         let text: SharedString = "W".into();
         let runs = vec![TextRun {
             len: text.len(),
-            font: font(cx.theme().mono_font_family.clone()),
+            font: font(self.font_family.clone()),
             color: Hsla::default(),
             background_color: None,
             underline: None,
@@ -385,6 +387,15 @@ impl TerminalView {
     ) {
         if (self.font_size - settings.font_size).abs() > f32::EPSILON {
             self.font_size = settings.font_size;
+            self.cell_metrics_measured = false;
+            self.update_cell_metrics(window, cx);
+            if let Some(bounds) = self.last_bounds {
+                self.update_dimensions(bounds, cx);
+            }
+        }
+
+        if self.font_family != settings.font_family {
+            self.font_family = settings.font_family.clone();
             self.cell_metrics_measured = false;
             self.update_cell_metrics(window, cx);
             if let Some(bounds) = self.last_bounds {

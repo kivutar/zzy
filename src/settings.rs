@@ -10,11 +10,14 @@ use gpui_component::setting::{
 };
 use gpui_component::v_flex;
 
-#[derive(Clone, Copy, Debug)]
+pub const DEFAULT_FONT_FAMILY: &str = "Adwaita Mono";
+
+#[derive(Clone, Debug)]
 pub struct AppSettings {
     pub font_size: f32,
     pub cursor_blink: bool,
     pub cursor_shape: CursorShapeSetting,
+    pub font_family: SharedString,
 }
 
 impl Default for AppSettings {
@@ -23,6 +26,7 @@ impl Default for AppSettings {
             font_size: DEFAULT_FONT_SIZE,
             cursor_blink: true,
             cursor_shape: CursorShapeSetting::Block,
+            font_family: DEFAULT_FONT_FAMILY.into(),
         }
     }
 }
@@ -58,7 +62,7 @@ impl SettingsView {
     }
 
     pub fn current_settings(&self) -> AppSettings {
-        self.settings
+        self.settings.clone()
     }
 }
 
@@ -88,6 +92,27 @@ impl Render for SettingsView {
                     .with_group_variant(GroupBoxVariant::Outline)
                     .pages(vec![SettingPage::new("Terminal").group(
                         SettingGroup::new().title("Appearance").items(vec![
+                            SettingItem::new(
+                                "Font Family",
+                                SettingField::input(
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| view.read(cx).settings.font_family.clone()
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: SharedString, cx: &mut App| {
+                                            let _ = view.update(cx, |view, cx| {
+                                                if view.settings.font_family != val {
+                                                    view.settings.font_family = val;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
+                                .default_value(default_settings.font_family.clone()),
+                            ),
                             SettingItem::new(
                                 "Font Size",
                                 SettingField::number_input(

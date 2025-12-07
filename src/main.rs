@@ -59,7 +59,7 @@ impl ZedTerm {
     }
 
     fn add_terminal_tab(&mut self, cx: &mut Context<Self>) {
-        let settings = self.settings;
+        let settings = self.settings.clone();
         let terminal = cx.new(move |cx| TerminalView::new(cx, &settings));
         cx.observe(&terminal, |_zedterm, _terminal, cx| {
             // Propagate terminal changes (e.g., title updates) to the tab bar.
@@ -84,7 +84,7 @@ impl ZedTerm {
             return;
         }
 
-        let settings = self.settings;
+        let settings = self.settings.clone();
         let settings_view = cx.new(move |cx| SettingsView::new(cx, settings));
         cx.observe(&settings_view, |zedterm, settings_view, cx| {
             let settings = settings_view.read(cx).current_settings();
@@ -107,7 +107,7 @@ impl ZedTerm {
 
         for tab in &self.tabs {
             if let TabContent::Terminal(term) = tab {
-                let settings = self.settings;
+                let settings = self.settings.clone();
                 let _ = term.update(cx, |view, cx| view.apply_settings(&settings, window, cx));
             }
         }
