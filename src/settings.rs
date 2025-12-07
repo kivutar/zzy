@@ -20,6 +20,7 @@ pub struct AppSettings {
     pub font_family: SharedString,
     pub ignore_bold: bool,
     pub scrollback: usize,
+    pub scrollbar: ScrollbarVisibility,
 }
 
 impl Default for AppSettings {
@@ -31,6 +32,7 @@ impl Default for AppSettings {
             font_family: DEFAULT_FONT_FAMILY.into(),
             ignore_bold: false,
             scrollback: 1000,
+            scrollbar: ScrollbarVisibility::Auto,
         }
     }
 }
@@ -48,6 +50,23 @@ impl CursorShapeSetting {
             CursorShapeSetting::Block => "block",
             CursorShapeSetting::Beam => "beam",
             CursorShapeSetting::Underline => "underline",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollbarVisibility {
+    Always,
+    Auto,
+    Never,
+}
+
+impl ScrollbarVisibility {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ScrollbarVisibility::Always => "always",
+            ScrollbarVisibility::Auto => "auto",
+            ScrollbarVisibility::Never => "never",
         }
     }
 }
@@ -81,6 +100,11 @@ impl Render for SettingsView {
             max: max_font_size,
             step: 1.0,
         };
+        let scrollbar_options = vec![
+            ("auto".into(), "Auto".into()),
+            ("always".into(), "Always".into()),
+            ("never".into(), "Never".into()),
+        ];
         let cursor_shape_options = vec![
             ("block".into(), "Block".into()),
             ("beam".into(), "Beam".into()),
@@ -252,6 +276,37 @@ impl Render for SettingsView {
                                     },
                                 )
                                 .default_value(default_settings.scrollback as f64),
+                            ),
+                            SettingItem::new(
+                                "Scrollbar",
+                                SettingField::dropdown(
+                                    scrollbar_options,
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| {
+                                            SharedString::from(
+                                                view.read(cx).settings.scrollbar.as_str(),
+                                            )
+                                        }
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: SharedString, cx: &mut App| {
+                                            let visibility = match val.as_str() {
+                                                "always" => ScrollbarVisibility::Always,
+                                                "never" => ScrollbarVisibility::Never,
+                                                _ => ScrollbarVisibility::Auto,
+                                            };
+                                            let _ = view.update(cx, |view, cx| {
+                                                if view.settings.scrollbar != visibility {
+                                                    view.settings.scrollbar = visibility;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
+                                .default_value(default_settings.scrollbar.as_str().to_string()),
                             ),
                         ]))]),
             )

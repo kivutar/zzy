@@ -48,6 +48,7 @@ pub struct TerminalView {
     cursor_shape: ansi::CursorShape,
     ignore_bold: bool,
     config: Config,
+    scrollbar: crate::settings::ScrollbarVisibility,
 }
 
 #[derive(Clone)]
@@ -172,6 +173,7 @@ impl TerminalView {
             cursor_shape,
             ignore_bold: settings.ignore_bold,
             config,
+            scrollbar: settings.scrollbar,
         };
 
         view.install_tab_passthrough(cx);
@@ -430,6 +432,11 @@ impl TerminalView {
         if self.config.scrolling_history != settings.scrollback {
             self.config.scrolling_history = settings.scrollback;
             self.term.set_options(self.config.clone());
+        }
+
+        if self.scrollbar != settings.scrollbar {
+            self.scrollbar = settings.scrollbar;
+            cx.notify();
         }
     }
 

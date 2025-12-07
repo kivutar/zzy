@@ -139,28 +139,39 @@ impl Render for TerminalView {
             self.last_bounds.and_then(|bounds| {
                 let viewport_height: f32 = bounds.size.height.into();
                 let scroll_max: f32 = max_offset.height.into();
-                if scroll_max <= 0.5 || viewport_height <= 0.5 {
-                    return None;
+                match self.scrollbar {
+                    crate::settings::ScrollbarVisibility::Never => None,
+                    crate::settings::ScrollbarVisibility::Auto
+                        if scroll_max <= 0.5 || viewport_height <= 0.5 =>
+                    {
+                        None
+                    }
+                    _ => {
+                        let effective_scroll_max = scroll_max.max(0.0);
+                        let content_height = viewport_height + effective_scroll_max;
+                        let thumb_height = (viewport_height / content_height * viewport_height)
+                            .clamp(20.0, viewport_height);
+                        let track_height = (viewport_height - thumb_height).max(0.0);
+                        let offset_y: f32 = (-self.scroll_handle.offset().y).into();
+                        let progress = if effective_scroll_max.abs() < f32::EPSILON {
+                            0.0
+                        } else {
+                            (offset_y / effective_scroll_max).clamp(0.0, 1.0)
+                        };
+                        let top = progress * track_height;
+
+                        Some(
+                            div()
+                                .absolute()
+                                .right(px(-4.0))
+                                .top(px(top))
+                                .w(px(8.0))
+                                .h(px(thumb_height))
+                                .rounded(px(4.0))
+                                .bg(cx.theme().border.alpha(0.65)),
+                        )
+                    }
                 }
-
-                let content_height = viewport_height + scroll_max;
-                let thumb_height = (viewport_height / content_height * viewport_height)
-                    .clamp(20.0, viewport_height);
-                let track_height = (viewport_height - thumb_height).max(0.0);
-                let offset_y: f32 = (-self.scroll_handle.offset().y).into();
-                let progress = (offset_y / scroll_max).clamp(0.0, 1.0);
-                let top = progress * track_height;
-
-                Some(
-                    div()
-                        .absolute()
-                        .right(px(-4.0))
-                        .top(px(top))
-                        .w(px(8.0))
-                        .h(px(thumb_height))
-                        .rounded(px(4.0))
-                        .bg(cx.theme().border.alpha(0.65)),
-                )
             })
         };
 
