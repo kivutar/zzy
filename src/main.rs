@@ -173,13 +173,19 @@ impl Render for ZedTerm {
         let view = cx.entity();
         let app_bg = theme_background(self.settings.theme);
         let app_fg = theme_foreground(self.settings.theme);
+        let app_border = colors::theme_border(self.settings.theme);
         Theme::global_mut(cx).background = app_bg.into();
         Theme::global_mut(cx).secondary = app_bg.into();
         Theme::global_mut(cx).foreground = app_fg.into();
         Theme::global_mut(cx).tab_bar = app_bg.into();
         Theme::global_mut(cx).tab_bar_segmented = app_bg.into();
         Theme::global_mut(cx).title_bar = app_bg.into();
-        Theme::global_mut(cx).title_bar_border = colors::theme_border(self.settings.theme).into();
+        Theme::global_mut(cx).border = app_border.into();
+        Theme::global_mut(cx).sidebar_border = app_border.into();
+        Theme::global_mut(cx).title_bar_border = app_border.into();
+        Theme::global_mut(cx).window_border = app_border.into();
+        Theme::global_mut(cx).tab_active = app_border.into();
+        Theme::global_mut(cx).table_row_border = app_border.into();
         v_flex()
             .size_full()
             .child(
