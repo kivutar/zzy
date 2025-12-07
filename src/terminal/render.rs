@@ -1,4 +1,5 @@
 use super::{BufferSnapshot, TerminalView};
+use crate::colors::palette_for;
 use crate::colors::Palette;
 use alacritty_terminal::{
     grid::Dimensions,
@@ -22,7 +23,7 @@ pub const DEFAULT_FONT_SIZE: f32 = 15.0;
 impl TerminalView {
     pub(crate) fn buffer_segments(&self) -> BufferSnapshot {
         let content = self.term.renderable_content();
-        let palette = Palette::new(content.colors);
+        let palette = Palette::new(content.colors, palette_for(self.theme));
         let cursor = content.cursor;
         let grid_ref = self.term.grid();
         let total_lines = grid_ref.total_lines();

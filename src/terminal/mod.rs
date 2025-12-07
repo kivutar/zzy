@@ -3,7 +3,8 @@ mod pty;
 mod render;
 
 use crate::colors::Palette;
-use crate::settings::{AppSettings, CursorShapeSetting};
+use crate::settings::{AppSettings, CursorShapeSetting, ScrollbarVisibility};
+use crate::theme::ThemeChoice;
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
     grid::Dimensions,
@@ -48,7 +49,8 @@ pub struct TerminalView {
     cursor_shape: ansi::CursorShape,
     ignore_bold: bool,
     config: Config,
-    scrollbar: crate::settings::ScrollbarVisibility,
+    scrollbar: ScrollbarVisibility,
+    theme: ThemeChoice,
 }
 
 #[derive(Clone)]
@@ -174,6 +176,7 @@ impl TerminalView {
             ignore_bold: settings.ignore_bold,
             config,
             scrollbar: settings.scrollbar,
+            theme: settings.theme,
         };
 
         view.install_tab_passthrough(cx);
@@ -436,6 +439,11 @@ impl TerminalView {
 
         if self.scrollbar != settings.scrollbar {
             self.scrollbar = settings.scrollbar;
+            cx.notify();
+        }
+
+        if self.theme != settings.theme {
+            self.theme = settings.theme;
             cx.notify();
         }
     }

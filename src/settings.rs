@@ -1,4 +1,5 @@
 use crate::terminal::DEFAULT_FONT_SIZE;
+use crate::theme::ThemeChoice;
 use gpui::{
     App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
     SharedString, Styled, Window,
@@ -21,6 +22,7 @@ pub struct AppSettings {
     pub ignore_bold: bool,
     pub scrollback: usize,
     pub scrollbar: ScrollbarVisibility,
+    pub theme: ThemeChoice,
 }
 
 impl Default for AppSettings {
@@ -33,6 +35,7 @@ impl Default for AppSettings {
             ignore_bold: false,
             scrollback: 1000,
             scrollbar: ScrollbarVisibility::Auto,
+            theme: ThemeChoice::HamiMelonDark,
         }
     }
 }
@@ -110,6 +113,14 @@ impl Render for SettingsView {
             ("beam".into(), "Beam".into()),
             ("underline".into(), "Underline".into()),
         ];
+        let theme_options = vec![
+            ("rose-pine".into(), "Rosé Pine".into()),
+            ("dracula".into(), "Dracula".into()),
+            ("github-dark".into(), "GitHub Dark".into()),
+            ("gruvbox-dark".into(), "Gruvbox Dark".into()),
+            ("hami-melon-dark".into(), "Hami Melon Dark".into()),
+            ("ayu-dark".into(), "Ayu Dark".into()),
+        ];
 
         v_flex()
             .p_neg_2()
@@ -143,11 +154,11 @@ impl Render for SettingsView {
                                     )
                                     .default_value(default_settings.font_family.clone()),
                                 ),
-                            SettingItem::new(
-                                "Font Size",
-                                SettingField::number_input(
-                                    font_size_options,
-                                    {
+                                SettingItem::new(
+                                    "Font Size",
+                                    SettingField::number_input(
+                                        font_size_options,
+                                        {
                                             let view = view.clone();
                                             move |cx: &App| view.read(cx).settings.font_size as f64
                                         },
@@ -190,6 +201,40 @@ impl Render for SettingsView {
                                         },
                                     )
                                     .default_value(default_settings.ignore_bold),
+                                ),
+                                SettingItem::new(
+                                    "Theme",
+                                    SettingField::dropdown(
+                                        theme_options,
+                                        {
+                                            let view = view.clone();
+                                            move |cx: &App| {
+                                                SharedString::from(
+                                                    view.read(cx).settings.theme.as_str(),
+                                                )
+                                            }
+                                        },
+                                        {
+                                            let view = view.clone();
+                                            move |val: SharedString, cx: &mut App| {
+                                                let theme = match val.as_str() {
+                                                    "rose-pine" => ThemeChoice::RosePine,
+                                                    "dracula" => ThemeChoice::Dracula,
+                                                    "github-dark" => ThemeChoice::GithubDark,
+                                                    "gruvbox-dark" => ThemeChoice::GruvboxDark,
+                                                    "ayu-dark" => ThemeChoice::AyuDark,
+                                                    _ => ThemeChoice::HamiMelonDark,
+                                                };
+                                                let _ = view.update(cx, |view, cx| {
+                                                    if view.settings.theme != theme {
+                                                        view.settings.theme = theme;
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    )
+                                    .default_value(default_settings.theme.as_str().to_string()),
                                 ),
                             ]))
                         .group(SettingGroup::new().title("Cursor").items(vec![

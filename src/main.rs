@@ -1,6 +1,7 @@
 mod colors;
 mod settings;
 mod terminal;
+mod theme;
 
 use gpui::*;
 use gpui_component::ActiveTheme;
