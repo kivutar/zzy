@@ -131,112 +131,111 @@ impl Render for SettingsView {
                     .with_group_variant(GroupBoxVariant::Outline)
                     .pages(vec![SettingPage::new("Terminal")
                         .group(SettingGroup::new().title("Font").items(vec![
-                                SettingItem::new(
-                                    "Font Family",
-                                    SettingField::input(
-                                        {
-                                            let view = view.clone();
-                                            move |cx: &App| {
-                                                view.read(cx).settings.font_family.clone()
-                                            }
-                                        },
-                                        {
-                                            let view = view.clone();
-                                            move |val: SharedString, cx: &mut App| {
-                                                let _ = view.update(cx, |view, cx| {
-                                                    if view.settings.font_family != val {
-                                                        view.settings.font_family = val;
-                                                        cx.notify();
-                                                    }
-                                                });
-                                            }
-                                        },
-                                    )
-                                    .default_value(default_settings.font_family.clone()),
-                                ),
-                                SettingItem::new(
-                                    "Font Size",
-                                    SettingField::number_input(
-                                        font_size_options,
-                                        {
-                                            let view = view.clone();
-                                            move |cx: &App| view.read(cx).settings.font_size as f64
-                                        },
-                                        {
-                                            let view = view.clone();
-                                            move |val: f64, cx: &mut App| {
-                                                let clamped =
-                                                    val.clamp(min_font_size, max_font_size);
-                                                let _ = view.update(cx, |view, cx| {
-                                                    let clamped = clamped as f32;
-                                                    if (view.settings.font_size - clamped).abs()
-                                                        > f32::EPSILON
-                                                    {
-                                                        view.settings.font_size = clamped;
-                                                        cx.notify();
-                                                    }
-                                                });
-                                            }
-                                        },
-                                    )
-                                    .default_value(default_settings.font_size as f64),
-                                ),
-                                SettingItem::new(
-                                    "Ignore Bold",
-                                    SettingField::switch(
-                                        {
-                                            let view = view.clone();
-                                            move |cx: &App| view.read(cx).settings.ignore_bold
-                                        },
-                                        {
-                                            let view = view.clone();
-                                            move |val: bool, cx: &mut App| {
-                                                let _ = view.update(cx, |view, cx| {
-                                                    if view.settings.ignore_bold != val {
-                                                        view.settings.ignore_bold = val;
-                                                        cx.notify();
-                                                    }
-                                                });
-                                            }
-                                        },
-                                    )
-                                    .default_value(default_settings.ignore_bold),
-                                ),
-                                SettingItem::new(
-                                    "Theme",
-                                    SettingField::dropdown(
-                                        theme_options,
-                                        {
-                                            let view = view.clone();
-                                            move |cx: &App| {
-                                                SharedString::from(
-                                                    view.read(cx).settings.theme.as_str(),
-                                                )
-                                            }
-                                        },
-                                        {
-                                            let view = view.clone();
-                                            move |val: SharedString, cx: &mut App| {
-                                                let theme = match val.as_str() {
-                                                    "rose-pine" => ThemeChoice::RosePine,
-                                                    "dracula" => ThemeChoice::Dracula,
-                                                    "github-dark" => ThemeChoice::GithubDark,
-                                                    "gruvbox-dark" => ThemeChoice::GruvboxDark,
-                                                    "ayu-dark" => ThemeChoice::AyuDark,
-                                                    _ => ThemeChoice::HamiMelonDark,
-                                                };
-                                                let _ = view.update(cx, |view, cx| {
-                                                    if view.settings.theme != theme {
-                                                        view.settings.theme = theme;
-                                                        cx.notify();
-                                                    }
-                                                });
-                                            }
-                                        },
-                                    )
-                                    .default_value(default_settings.theme.as_str().to_string()),
-                                ),
-                            ]))
+                            SettingItem::new(
+                                "Font Family",
+                                SettingField::input(
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| view.read(cx).settings.font_family.clone()
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: SharedString, cx: &mut App| {
+                                            let _ = view.update(cx, |view, cx| {
+                                                if view.settings.font_family != val {
+                                                    view.settings.font_family = val;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
+                                .default_value(default_settings.font_family.clone()),
+                            ),
+                            SettingItem::new(
+                                "Font Size",
+                                SettingField::number_input(
+                                    font_size_options,
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| view.read(cx).settings.font_size as f64
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: f64, cx: &mut App| {
+                                            let clamped = val.clamp(min_font_size, max_font_size);
+                                            let _ = view.update(cx, |view, cx| {
+                                                let clamped = clamped as f32;
+                                                if (view.settings.font_size - clamped).abs()
+                                                    > f32::EPSILON
+                                                {
+                                                    view.settings.font_size = clamped;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
+                                .default_value(default_settings.font_size as f64),
+                            ),
+                            SettingItem::new(
+                                "Ignore Bold",
+                                SettingField::switch(
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| view.read(cx).settings.ignore_bold
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: bool, cx: &mut App| {
+                                            let _ = view.update(cx, |view, cx| {
+                                                if view.settings.ignore_bold != val {
+                                                    view.settings.ignore_bold = val;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
+                                .default_value(default_settings.ignore_bold),
+                            ),
+                        ]))
+                        .group(SettingGroup::new().title("Theme").items(vec![
+                            SettingItem::new(
+                                "Color Theme",
+                                SettingField::dropdown(
+                                    theme_options,
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| {
+                                            SharedString::from(
+                                                view.read(cx).settings.theme.as_str(),
+                                            )
+                                        }
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: SharedString, cx: &mut App| {
+                                            let theme = match val.as_str() {
+                                                "rose-pine" => ThemeChoice::RosePine,
+                                                "dracula" => ThemeChoice::Dracula,
+                                                "github-dark" => ThemeChoice::GithubDark,
+                                                "gruvbox-dark" => ThemeChoice::GruvboxDark,
+                                                "ayu-dark" => ThemeChoice::AyuDark,
+                                                _ => ThemeChoice::HamiMelonDark,
+                                            };
+                                            let _ = view.update(cx, |view, cx| {
+                                                if view.settings.theme != theme {
+                                                    view.settings.theme = theme;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
+                                .default_value(default_settings.theme.as_str().to_string()),
+                            ),
+                        ]))
                         .group(SettingGroup::new().title("Cursor").items(vec![
                                 SettingItem::new(
                                     "Cursor Blinking",
