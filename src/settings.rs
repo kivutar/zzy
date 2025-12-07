@@ -90,109 +90,117 @@ impl Render for SettingsView {
             .child(
                 SettingsPanel::new("app-settings")
                     .with_group_variant(GroupBoxVariant::Outline)
-                    .pages(vec![SettingPage::new("Terminal").group(
-                        SettingGroup::new().title("Appearance").items(vec![
-                            SettingItem::new(
-                                "Font Family",
-                                SettingField::input(
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| view.read(cx).settings.font_family.clone()
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: SharedString, cx: &mut App| {
-                                            let _ = view.update(cx, |view, cx| {
-                                                if view.settings.font_family != val {
-                                                    view.settings.font_family = val;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.font_family.clone()),
-                            ),
-                            SettingItem::new(
-                                "Font Size",
-                                SettingField::number_input(
-                                    font_size_options,
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| view.read(cx).settings.font_size as f64
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: f64, cx: &mut App| {
-                                            let clamped = val.clamp(min_font_size, max_font_size);
-                                            let _ = view.update(cx, |view, cx| {
-                                                let clamped = clamped as f32;
-                                                if (view.settings.font_size - clamped).abs()
-                                                    > f32::EPSILON
-                                                {
-                                                    view.settings.font_size = clamped;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.font_size as f64),
-                            ),
-                            SettingItem::new(
-                                "Cursor Blinking",
-                                SettingField::switch(
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| view.read(cx).settings.cursor_blink
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: bool, cx: &mut App| {
-                                            let _ = view.update(cx, |view, cx| {
-                                                if view.settings.cursor_blink != val {
-                                                    view.settings.cursor_blink = val;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.cursor_blink),
-                            ),
-                            SettingItem::new(
-                                "Cursor Shape",
-                                SettingField::dropdown(
-                                    cursor_shape_options,
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| {
-                                            SharedString::from(
-                                                view.read(cx).settings.cursor_shape.as_str(),
-                                            )
-                                        }
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: SharedString, cx: &mut App| {
-                                            let shape = match val.as_str() {
-                                                "beam" => CursorShapeSetting::Beam,
-                                                "underline" => CursorShapeSetting::Underline,
-                                                _ => CursorShapeSetting::Block,
-                                            };
-                                            let _ = view.update(cx, |view, cx| {
-                                                if view.settings.cursor_shape != shape {
-                                                    view.settings.cursor_shape = shape;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.cursor_shape.as_str().to_string()),
-                            ),
-                        ]),
-                    )]),
+                    .pages(vec![SettingPage::new("Terminal")
+                        .group(
+                            SettingGroup::new().title("Font").items(vec![
+                                SettingItem::new(
+                                    "Font Family",
+                                    SettingField::input(
+                                        {
+                                            let view = view.clone();
+                                            move |cx: &App| {
+                                                view.read(cx).settings.font_family.clone()
+                                            }
+                                        },
+                                        {
+                                            let view = view.clone();
+                                            move |val: SharedString, cx: &mut App| {
+                                                let _ = view.update(cx, |view, cx| {
+                                                    if view.settings.font_family != val {
+                                                        view.settings.font_family = val;
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    )
+                                    .default_value(default_settings.font_family.clone()),
+                                ),
+                                SettingItem::new(
+                                    "Font Size",
+                                    SettingField::number_input(
+                                        font_size_options,
+                                        {
+                                            let view = view.clone();
+                                            move |cx: &App| view.read(cx).settings.font_size as f64
+                                        },
+                                        {
+                                            let view = view.clone();
+                                            move |val: f64, cx: &mut App| {
+                                                let clamped =
+                                                    val.clamp(min_font_size, max_font_size);
+                                                let _ = view.update(cx, |view, cx| {
+                                                    let clamped = clamped as f32;
+                                                    if (view.settings.font_size - clamped).abs()
+                                                        > f32::EPSILON
+                                                    {
+                                                        view.settings.font_size = clamped;
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    )
+                                    .default_value(default_settings.font_size as f64),
+                                ),
+                            ]),
+                        )
+                        .group(SettingGroup::new().title("Cursor").items(vec![
+                                SettingItem::new(
+                                    "Cursor Blinking",
+                                    SettingField::switch(
+                                        {
+                                            let view = view.clone();
+                                            move |cx: &App| view.read(cx).settings.cursor_blink
+                                        },
+                                        {
+                                            let view = view.clone();
+                                            move |val: bool, cx: &mut App| {
+                                                let _ = view.update(cx, |view, cx| {
+                                                    if view.settings.cursor_blink != val {
+                                                        view.settings.cursor_blink = val;
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    )
+                                    .default_value(default_settings.cursor_blink),
+                                ),
+                                SettingItem::new(
+                                    "Cursor Shape",
+                                    SettingField::dropdown(
+                                        cursor_shape_options,
+                                        {
+                                            let view = view.clone();
+                                            move |cx: &App| {
+                                                SharedString::from(
+                                                    view.read(cx).settings.cursor_shape.as_str(),
+                                                )
+                                            }
+                                        },
+                                        {
+                                            let view = view.clone();
+                                            move |val: SharedString, cx: &mut App| {
+                                                let shape = match val.as_str() {
+                                                    "beam" => CursorShapeSetting::Beam,
+                                                    "underline" => CursorShapeSetting::Underline,
+                                                    _ => CursorShapeSetting::Block,
+                                                };
+                                                let _ = view.update(cx, |view, cx| {
+                                                    if view.settings.cursor_shape != shape {
+                                                        view.settings.cursor_shape = shape;
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    )
+                                    .default_value(
+                                        default_settings.cursor_shape.as_str().to_string(),
+                                    ),
+                                ),
+                            ]))]),
             )
     }
 }
