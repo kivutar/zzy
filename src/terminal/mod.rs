@@ -47,6 +47,7 @@ pub struct TerminalView {
     cursor_blink_enabled: bool,
     cursor_shape: ansi::CursorShape,
     ignore_bold: bool,
+    config: Config,
 }
 
 #[derive(Clone)]
@@ -120,15 +121,16 @@ impl TerminalView {
         let (tx, rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx: tx.clone() };
         let cursor_shape = cursor_shape_from_settings(settings);
-        let term = Term::new(
-            Config {
-                scrolling_history: 1000,
-                default_cursor_style: ansi::CursorStyle {
-                    shape: cursor_shape,
-                    blinking: true,
-                },
-                ..Config::default()
+        let config = Config {
+            scrolling_history: settings.scrollback,
+            default_cursor_style: ansi::CursorStyle {
+                shape: cursor_shape,
+                blinking: settings.cursor_blink,
             },
+            ..Config::default()
+        };
+        let term = Term::new(
+            config.clone(),
             &SimpleDimensions::new(render::DEFAULT_COLS, render::DEFAULT_ROWS),
             proxy,
         );
@@ -169,6 +171,7 @@ impl TerminalView {
             cursor_blink_enabled: settings.cursor_blink,
             cursor_shape,
             ignore_bold: settings.ignore_bold,
+            config,
         };
 
         view.install_tab_passthrough(cx);
@@ -410,6 +413,9 @@ impl TerminalView {
             self.cursor_visible = true;
         }
 
+        self.config.default_cursor_style.blinking = settings.cursor_blink;
+        self.config.default_cursor_style.shape = self.cursor_shape;
+
         let shape = cursor_shape_from_settings(settings);
         if self.cursor_shape != shape {
             self.apply_cursor_shape(shape);
@@ -420,10 +426,16 @@ impl TerminalView {
             self.ignore_bold = settings.ignore_bold;
             cx.notify();
         }
+
+        if self.config.scrolling_history != settings.scrollback {
+            self.config.scrolling_history = settings.scrollback;
+            self.term.set_options(self.config.clone());
+        }
     }
 
     fn apply_cursor_shape(&mut self, shape: ansi::CursorShape) {
         self.cursor_shape = shape;
+        self.config.default_cursor_style.shape = shape;
         let code = match shape {
             ansi::CursorShape::Underline => 4,
             ansi::CursorShape::Beam => 6,

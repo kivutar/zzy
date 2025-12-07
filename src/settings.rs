@@ -19,6 +19,7 @@ pub struct AppSettings {
     pub cursor_shape: CursorShapeSetting,
     pub font_family: SharedString,
     pub ignore_bold: bool,
+    pub scrollback: usize,
 }
 
 impl Default for AppSettings {
@@ -29,6 +30,7 @@ impl Default for AppSettings {
             cursor_shape: CursorShapeSetting::Block,
             font_family: DEFAULT_FONT_FAMILY.into(),
             ignore_bold: false,
+            scrollback: 1000,
         }
     }
 }
@@ -221,7 +223,37 @@ impl Render for SettingsView {
                                         default_settings.cursor_shape.as_str().to_string(),
                                     ),
                                 ),
-                            ]))]),
+                            ]))
+                        .group(SettingGroup::new().title("History").items(vec![
+                            SettingItem::new(
+                                "Scrollback Lines",
+                                SettingField::number_input(
+                                    NumberFieldOptions {
+                                        min: 0.0,
+                                        max: 50_000.0,
+                                        step: 1000.0,
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| view.read(cx).settings.scrollback as f64
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: f64, cx: &mut App| {
+                                            let clamped = val.clamp(0.0, 50_000.0);
+                                            let lines = clamped.round() as usize;
+                                            let _ = view.update(cx, |view, cx| {
+                                                if view.settings.scrollback != lines {
+                                                    view.settings.scrollback = lines;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
+                                .default_value(default_settings.scrollback as f64),
+                            ),
+                        ]))]),
             )
     }
 }
