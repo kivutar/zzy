@@ -3,6 +3,7 @@ use gpui::{
     App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
     Styled, Window,
 };
+use gpui_component::group_box::GroupBoxVariant;
 use gpui_component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage,
     Settings as SettingsPanel,
@@ -54,58 +55,65 @@ impl Render for SettingsView {
             step: 1.0,
         };
 
-        v_flex().p_neg_2().size_full().track_focus(&self.focus_handle).child(
-            SettingsPanel::new("app-settings").pages(vec![SettingPage::new("Terminal").group(
-                SettingGroup::new().title("Appearance").items(vec![
-                    SettingItem::new(
-                        "Font Size",
-                        SettingField::number_input(
-                            font_size_options,
-                            {
-                                let view = view.clone();
-                                move |cx: &App| view.read(cx).settings.font_size as f64
-                            },
-                            {
-                                let view = view.clone();
-                                move |val: f64, cx: &mut App| {
-                                    let clamped = val.clamp(min_font_size, max_font_size);
-                                    let _ = view.update(cx, |view, cx| {
-                                        let clamped = clamped as f32;
-                                        if (view.settings.font_size - clamped).abs() > f32::EPSILON
-                                        {
-                                            view.settings.font_size = clamped;
-                                            cx.notify();
+        v_flex()
+            .p_neg_2()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .child(
+                SettingsPanel::new("app-settings")
+                    .with_group_variant(GroupBoxVariant::Outline)
+                    .pages(vec![SettingPage::new("Terminal").group(
+                        SettingGroup::new().title("Appearance").items(vec![
+                            SettingItem::new(
+                                "Font Size",
+                                SettingField::number_input(
+                                    font_size_options,
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| view.read(cx).settings.font_size as f64
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: f64, cx: &mut App| {
+                                            let clamped = val.clamp(min_font_size, max_font_size);
+                                            let _ = view.update(cx, |view, cx| {
+                                                let clamped = clamped as f32;
+                                                if (view.settings.font_size - clamped).abs()
+                                                    > f32::EPSILON
+                                                {
+                                                    view.settings.font_size = clamped;
+                                                    cx.notify();
+                                                }
+                                            });
                                         }
-                                    });
-                                }
-                            },
-                        )
-                        .default_value(default_settings.font_size as f64),
-                    ),
-                    SettingItem::new(
-                        "Cursor Blinking",
-                        SettingField::switch(
-                            {
-                                let view = view.clone();
-                                move |cx: &App| view.read(cx).settings.cursor_blink
-                            },
-                            {
-                                let view = view.clone();
-                                move |val: bool, cx: &mut App| {
-                                    let _ = view.update(cx, |view, cx| {
-                                        if view.settings.cursor_blink != val {
-                                            view.settings.cursor_blink = val;
-                                            cx.notify();
+                                    },
+                                )
+                                .default_value(default_settings.font_size as f64),
+                            ),
+                            SettingItem::new(
+                                "Cursor Blinking",
+                                SettingField::switch(
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| view.read(cx).settings.cursor_blink
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: bool, cx: &mut App| {
+                                            let _ = view.update(cx, |view, cx| {
+                                                if view.settings.cursor_blink != val {
+                                                    view.settings.cursor_blink = val;
+                                                    cx.notify();
+                                                }
+                                            });
                                         }
-                                    });
-                                }
-                            },
-                        )
-                        .default_value(default_settings.cursor_blink),
-                    ),
-                ]),
-            )]),
-        )
+                                    },
+                                )
+                                .default_value(default_settings.cursor_blink),
+                            ),
+                        ]),
+                    )]),
+            )
     }
 }
 
