@@ -523,6 +523,84 @@ impl TerminalView {
         Some(SelectionRange { start: a, end: b })
     }
 
+    fn char_for_column(&self, line_idx: usize, column: usize) -> Option<char> {
+        let grid_ref = self.term.grid();
+        let columns = grid_ref.columns();
+        if line_idx >= grid_ref.total_lines() || column >= columns {
+            return None;
+        }
+
+        let screen_lines = grid_ref.screen_lines();
+        let history_size = grid_ref.total_lines().saturating_sub(screen_lines);
+        let grid_line = Line(line_idx as i32 - history_size as i32);
+        let cell = &grid_ref[grid_line][Column(column)];
+
+        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            if column == 0 {
+                return Some(' ');
+            }
+            let prev_cell = &grid_ref[grid_line][Column(column.saturating_sub(1))];
+            return Some(prev_cell.c);
+        }
+
+        Some(cell.c)
+    }
+
+    fn word_bounds_at(&self, pos: CellPosition) -> Option<SelectionRange> {
+        let grid_ref = self.term.grid();
+        let columns = grid_ref.columns();
+        if columns == 0 || grid_ref.total_lines() == 0 {
+            return None;
+        }
+
+        let line = pos.line.min(grid_ref.total_lines().saturating_sub(1));
+        let mut col = pos.column.min(columns.saturating_sub(1));
+        let ch = self.char_for_column(line, col).unwrap_or(' ');
+        let is_word = !ch.is_whitespace();
+
+        // If we clicked on a spacer, shift left until we hit a non-spacer so we include the wide char.
+        while col > 0 {
+            let grid_line =
+                Line(line as i32 - (grid_ref.total_lines() - grid_ref.screen_lines()) as i32);
+            let cell = &grid_ref[grid_line][Column(col)];
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                col -= 1;
+                continue;
+            }
+            break;
+        }
+
+        let mut start = col;
+        while start > 0 {
+            if let Some(c) = self.char_for_column(line, start.saturating_sub(1)) {
+                if (!c.is_whitespace()) == is_word {
+                    start -= 1;
+                    continue;
+                }
+            }
+            break;
+        }
+
+        let mut end = col;
+        while end + 1 < columns {
+            if let Some(c) = self.char_for_column(line, end + 1) {
+                if (!c.is_whitespace()) == is_word {
+                    end += 1;
+                    continue;
+                }
+            }
+            break;
+        }
+
+        Some(SelectionRange {
+            start: CellPosition {
+                line,
+                column: start,
+            },
+            end: CellPosition { line, column: end },
+        })
+    }
+
     fn selection_span_for_line(
         &self,
         range: &SelectionRange,
@@ -752,17 +830,29 @@ impl TerminalView {
 
         window.focus(&self.focus_handle);
         if let Some(pos) = self.cell_position_from_point(event.position) {
-            if event.modifiers.shift {
-                if self.selection_start.is_none() {
+            if event.click_count >= 2 {
+                if let Some(range) = self.word_bounds_at(pos) {
+                    self.selection_start = Some(range.start);
+                    self.selection_end = Some(range.end);
+                } else {
                     self.selection_start = Some(pos);
+                    self.selection_end = Some(pos);
                 }
-                self.selection_end = Some(pos);
+                self.is_selecting = true;
+                cx.notify();
             } else {
-                self.selection_start = Some(pos);
-                self.selection_end = Some(pos);
+                if event.modifiers.shift {
+                    if self.selection_start.is_none() {
+                        self.selection_start = Some(pos);
+                    }
+                    self.selection_end = Some(pos);
+                } else {
+                    self.selection_start = Some(pos);
+                    self.selection_end = Some(pos);
+                }
+                self.is_selecting = true;
+                cx.notify();
             }
-            self.is_selecting = true;
-            cx.notify();
         }
         cx.stop_propagation();
     }
@@ -792,11 +882,6 @@ impl TerminalView {
     ) {
         if event.button != MouseButton::Left {
             return;
-        }
-
-        if let Some(pos) = self.cell_position_from_point(event.position) {
-            self.selection_end = Some(pos);
-            cx.notify();
         }
 
         self.is_selecting = false;
