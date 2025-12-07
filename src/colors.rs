@@ -267,7 +267,7 @@ fn to_rgba(rgb: ansi::Rgb) -> Rgba {
     }
 }
 
-fn rgba_hex(hex: u32) -> Rgba {
+pub(crate) fn rgba_hex(hex: u32) -> Rgba {
     let r = ((hex >> 24) & 0xff) as f32 / 255.0;
     let g = ((hex >> 16) & 0xff) as f32 / 255.0;
     let b = ((hex >> 8) & 0xff) as f32 / 255.0;
@@ -313,7 +313,7 @@ const DEFAULT_THEME: ThemeOverrides = ThemeOverrides {
         (ansi::NamedColor::DimWhite, 0x575d65ff),
     ],
     default_fg: 0xccccccff,
-    default_bg: 0x00000000,
+    default_bg: 0x161616ff,
 };
 
 const ROSE_PINE: ThemeOverrides = ThemeOverrides {
@@ -410,4 +410,12 @@ pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOve
         crate::theme::ThemeChoice::AyuDark => &AYU_DARK,
         crate::theme::ThemeChoice::HamiMelonDark => &DEFAULT_THEME,
     }
+}
+
+pub(crate) fn theme_background(theme: crate::theme::ThemeChoice) -> Rgba {
+    rgba_hex(palette_for(theme).default_bg)
+}
+
+pub(crate) fn theme_foreground(theme: crate::theme::ThemeChoice) -> Rgba {
+    rgba_hex(palette_for(theme).default_fg)
 }

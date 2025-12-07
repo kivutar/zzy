@@ -3,8 +3,8 @@ mod settings;
 mod terminal;
 mod theme;
 
+use colors::{theme_background, theme_foreground};
 use gpui::*;
-use gpui_component::ActiveTheme;
 use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -171,6 +171,11 @@ impl Render for ZedTerm {
         }
 
         let view = cx.entity();
+        let app_bg = theme_background(self.settings.theme);
+        let app_fg = theme_foreground(self.settings.theme);
+        Theme::global_mut(cx).background = app_bg.into();
+        Theme::global_mut(cx).secondary = app_bg.into();
+        Theme::global_mut(cx).foreground = app_fg.into();
         v_flex()
             .size_full()
             .child(
@@ -266,7 +271,7 @@ impl Render for ZedTerm {
             .child(
                 v_flex()
                     .id("window-body")
-                    .bg(cx.theme().secondary)
+                    .bg(app_bg)
                     .flex_1()
                     .w_full()
                     .h_full()
