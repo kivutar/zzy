@@ -179,6 +179,7 @@ impl Render for ZedTerm {
         Theme::global_mut(cx).tab_bar = app_bg.into();
         Theme::global_mut(cx).tab_bar_segmented = app_bg.into();
         Theme::global_mut(cx).title_bar = app_bg.into();
+        Theme::global_mut(cx).title_bar_border = colors::theme_border(self.settings.theme).into();
         v_flex()
             .size_full()
             .child(

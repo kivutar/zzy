@@ -13,6 +13,7 @@ pub(crate) struct ThemeOverrides {
     pub named: &'static [(ansi::NamedColor, u32)],
     pub default_fg: u32,
     pub default_bg: u32,
+    pub border: u32,
 }
 
 pub(crate) struct Palette {
@@ -314,6 +315,7 @@ const DEFAULT_THEME: ThemeOverrides = ThemeOverrides {
     ],
     default_fg: 0xccccccff,
     default_bg: 0x161616ff,
+    border: 0x2a2a2aff,
 };
 
 const ROSE_PINE: ThemeOverrides = ThemeOverrides {
@@ -331,6 +333,7 @@ const ROSE_PINE: ThemeOverrides = ThemeOverrides {
     ],
     default_fg: 0xe0def4ff,
     default_bg: 0x191724ff,
+    border: 0x1c1c2eff,
 };
 
 const DRACULA: ThemeOverrides = ThemeOverrides {
@@ -348,6 +351,7 @@ const DRACULA: ThemeOverrides = ThemeOverrides {
     ],
     default_fg: 0xf8f8f2ff,
     default_bg: 0x282a36ff,
+    border: 0x383a44ff,
 };
 
 const GITHUB_DARK: ThemeOverrides = ThemeOverrides {
@@ -365,6 +369,7 @@ const GITHUB_DARK: ThemeOverrides = ThemeOverrides {
     ],
     default_fg: 0xc9d1d9ff,
     default_bg: 0x0d1117ff,
+    border: 0x3d454dff,
 };
 
 const GRUVBOX_DARK: ThemeOverrides = ThemeOverrides {
@@ -382,6 +387,7 @@ const GRUVBOX_DARK: ThemeOverrides = ThemeOverrides {
     ],
     default_fg: 0xebdbb2ff,
     default_bg: 0x282828ff,
+    border: 0x5c534dff,
 };
 
 const AYU_DARK: ThemeOverrides = ThemeOverrides {
@@ -399,6 +405,7 @@ const AYU_DARK: ThemeOverrides = ThemeOverrides {
     ],
     default_fg: 0xe6e1cfff,
     default_bg: 0x0f1419ff,
+    border: 0x404042ff,
 };
 
 pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOverrides {
@@ -418,4 +425,8 @@ pub(crate) fn theme_background(theme: crate::theme::ThemeChoice) -> Rgba {
 
 pub(crate) fn theme_foreground(theme: crate::theme::ThemeChoice) -> Rgba {
     rgba_hex(palette_for(theme).default_fg)
+}
+
+pub(crate) fn theme_border(theme: crate::theme::ThemeChoice) -> Rgba {
+    rgba_hex(palette_for(theme).border)
 }
