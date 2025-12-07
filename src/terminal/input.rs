@@ -131,16 +131,12 @@ impl TerminalView {
             return None;
         }
 
-        let offset = self.scroll_handle.offset();
         let origin_x = bounds.origin.x;
         let origin_y = bounds.origin.y;
         let rel_x: f32 = (position.x - origin_x).into();
         let rel_y: f32 = (position.y - origin_y).into();
-        let offset_x: f32 = offset.x.into();
-        let offset_y: f32 = offset.y.into();
-
-        let content_x = rel_x - offset_x;
-        let content_y = rel_y - offset_y;
+        let content_x = rel_x;
+        let content_y = rel_y;
 
         let max_col = (columns.saturating_sub(1)) as isize;
         let max_line = (total_lines.saturating_sub(1)) as isize;
