@@ -54,7 +54,7 @@ impl Render for SettingsView {
             step: 1.0,
         };
 
-        v_flex().size_full().track_focus(&self.focus_handle).child(
+        v_flex().p_neg_2().size_full().track_focus(&self.focus_handle).child(
             SettingsPanel::new("app-settings").pages(vec![SettingPage::new("Terminal").group(
                 SettingGroup::new().title("Appearance").items(vec![
                     SettingItem::new(
