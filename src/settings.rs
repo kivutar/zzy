@@ -18,6 +18,7 @@ pub struct AppSettings {
     pub cursor_blink: bool,
     pub cursor_shape: CursorShapeSetting,
     pub font_family: SharedString,
+    pub ignore_bold: bool,
 }
 
 impl Default for AppSettings {
@@ -27,6 +28,7 @@ impl Default for AppSettings {
             cursor_blink: true,
             cursor_shape: CursorShapeSetting::Block,
             font_family: DEFAULT_FONT_FAMILY.into(),
+            ignore_bold: false,
         }
     }
 }
@@ -91,8 +93,7 @@ impl Render for SettingsView {
                 SettingsPanel::new("app-settings")
                     .with_group_variant(GroupBoxVariant::Outline)
                     .pages(vec![SettingPage::new("Terminal")
-                        .group(
-                            SettingGroup::new().title("Font").items(vec![
+                        .group(SettingGroup::new().title("Font").items(vec![
                                 SettingItem::new(
                                     "Font Family",
                                     SettingField::input(
@@ -116,11 +117,11 @@ impl Render for SettingsView {
                                     )
                                     .default_value(default_settings.font_family.clone()),
                                 ),
-                                SettingItem::new(
-                                    "Font Size",
-                                    SettingField::number_input(
-                                        font_size_options,
-                                        {
+                            SettingItem::new(
+                                "Font Size",
+                                SettingField::number_input(
+                                    font_size_options,
+                                    {
                                             let view = view.clone();
                                             move |cx: &App| view.read(cx).settings.font_size as f64
                                         },
@@ -143,8 +144,28 @@ impl Render for SettingsView {
                                     )
                                     .default_value(default_settings.font_size as f64),
                                 ),
-                            ]),
-                        )
+                                SettingItem::new(
+                                    "Ignore Bold",
+                                    SettingField::switch(
+                                        {
+                                            let view = view.clone();
+                                            move |cx: &App| view.read(cx).settings.ignore_bold
+                                        },
+                                        {
+                                            let view = view.clone();
+                                            move |val: bool, cx: &mut App| {
+                                                let _ = view.update(cx, |view, cx| {
+                                                    if view.settings.ignore_bold != val {
+                                                        view.settings.ignore_bold = val;
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    )
+                                    .default_value(default_settings.ignore_bold),
+                                ),
+                            ]))
                         .group(SettingGroup::new().title("Cursor").items(vec![
                                 SettingItem::new(
                                     "Cursor Blinking",

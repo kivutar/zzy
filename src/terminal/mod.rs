@@ -46,6 +46,7 @@ pub struct TerminalView {
     is_selecting: bool,
     cursor_blink_enabled: bool,
     cursor_shape: ansi::CursorShape,
+    ignore_bold: bool,
 }
 
 #[derive(Clone)]
@@ -167,6 +168,7 @@ impl TerminalView {
             is_selecting: false,
             cursor_blink_enabled: settings.cursor_blink,
             cursor_shape,
+            ignore_bold: settings.ignore_bold,
         };
 
         view.install_tab_passthrough(cx);
@@ -411,6 +413,11 @@ impl TerminalView {
         let shape = cursor_shape_from_settings(settings);
         if self.cursor_shape != shape {
             self.apply_cursor_shape(shape);
+            cx.notify();
+        }
+
+        if self.ignore_bold != settings.ignore_bold {
+            self.ignore_bold = settings.ignore_bold;
             cx.notify();
         }
     }

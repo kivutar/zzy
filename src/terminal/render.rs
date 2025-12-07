@@ -248,7 +248,9 @@ impl Render for TerminalView {
                         line_content = line_content.child(
                             div()
                                 .whitespace_nowrap()
-                                .when(seg.is_bold, |this| this.font_weight(FontWeight::BOLD))
+                                .when(seg.is_bold && !self.ignore_bold, |this| {
+                                    this.font_weight(FontWeight::BOLD)
+                                })
                                 .text_color(text_color)
                                 .bg(bg_color)
                                 .child(seg.text),
