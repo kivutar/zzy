@@ -3,7 +3,7 @@ mod pty;
 mod render;
 
 use crate::colors::Palette;
-use crate::settings::AppSettings;
+use crate::settings::{AppSettings, CursorShapeSetting};
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
     grid::Dimensions,
@@ -45,6 +45,7 @@ pub struct TerminalView {
     selection_end: Option<CellPosition>,
     is_selecting: bool,
     cursor_blink_enabled: bool,
+    cursor_shape: ansi::CursorShape,
 }
 
 #[derive(Clone)]
@@ -70,6 +71,8 @@ pub(crate) struct BufferSnapshot {
     segments_by_line: Vec<Vec<CellRender>>,
     palette: Palette,
     columns: usize,
+    cursor_shape: ansi::CursorShape,
+    cursor_position: Option<CellPosition>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,9 +118,14 @@ impl TerminalView {
         let focus_handle = cx.focus_handle();
         let (tx, rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx: tx.clone() };
+        let cursor_shape = cursor_shape_from_settings(settings);
         let term = Term::new(
             Config {
                 scrolling_history: 1000,
+                default_cursor_style: ansi::CursorStyle {
+                    shape: cursor_shape,
+                    blinking: true,
+                },
                 ..Config::default()
             },
             &SimpleDimensions::new(render::DEFAULT_COLS, render::DEFAULT_ROWS),
@@ -156,11 +164,13 @@ impl TerminalView {
             selection_end: None,
             is_selecting: false,
             cursor_blink_enabled: settings.cursor_blink,
+            cursor_shape,
         };
 
         view.install_tab_passthrough(cx);
         view.spawn_message_loop(rx, cx);
         view.start_pty(tx, cx);
+        view.apply_cursor_shape(cursor_shape);
         view.start_cursor_blink(cx);
         view
     }
@@ -386,6 +396,23 @@ impl TerminalView {
         if !self.cursor_blink_enabled {
             self.cursor_visible = true;
         }
+
+        let shape = cursor_shape_from_settings(settings);
+        if self.cursor_shape != shape {
+            self.apply_cursor_shape(shape);
+            cx.notify();
+        }
+    }
+
+    fn apply_cursor_shape(&mut self, shape: ansi::CursorShape) {
+        self.cursor_shape = shape;
+        let code = match shape {
+            ansi::CursorShape::Underline => 4,
+            ansi::CursorShape::Beam => 6,
+            _ => 2,
+        };
+        let seq = format!("\u{1b}[{code} q");
+        self.parser.advance(&mut self.term, seq.as_bytes());
     }
 }
 
@@ -422,5 +449,38 @@ mod tests {
             normalize_term_env(Some(OsString::from("alacritty"))),
             OsString::from("alacritty")
         );
+    }
+
+    #[test]
+    fn maps_cursor_shape() {
+        assert_eq!(
+            cursor_shape_from_settings(&AppSettings {
+                cursor_shape: CursorShapeSetting::Block,
+                ..Default::default()
+            }),
+            ansi::CursorShape::Block
+        );
+        assert_eq!(
+            cursor_shape_from_settings(&AppSettings {
+                cursor_shape: CursorShapeSetting::Beam,
+                ..Default::default()
+            }),
+            ansi::CursorShape::Beam
+        );
+        assert_eq!(
+            cursor_shape_from_settings(&AppSettings {
+                cursor_shape: CursorShapeSetting::Underline,
+                ..Default::default()
+            }),
+            ansi::CursorShape::Underline
+        );
+    }
+}
+
+fn cursor_shape_from_settings(settings: &AppSettings) -> ansi::CursorShape {
+    match settings.cursor_shape {
+        CursorShapeSetting::Beam => ansi::CursorShape::Beam,
+        CursorShapeSetting::Underline => ansi::CursorShape::Underline,
+        _ => ansi::CursorShape::Block,
     }
 }

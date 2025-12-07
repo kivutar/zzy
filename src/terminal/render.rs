@@ -29,6 +29,7 @@ impl TerminalView {
         let screen_lines = grid_ref.screen_lines();
         let history_size = total_lines.saturating_sub(screen_lines);
         let cols = grid_ref.columns();
+        let mut cursor_position = None;
 
         let mut grid = vec![
             vec![
@@ -72,6 +73,12 @@ impl TerminalView {
                     is_cursor,
                     is_bold,
                 };
+                if is_cursor {
+                    cursor_position = Some(super::CellPosition {
+                        line: line_idx,
+                        column: col_idx,
+                    });
+                }
             }
         }
 
@@ -110,6 +117,8 @@ impl TerminalView {
             segments_by_line: segments,
             palette,
             columns: cols,
+            cursor_shape: cursor.shape,
+            cursor_position,
         }
     }
 }
@@ -120,7 +129,10 @@ impl Render for TerminalView {
 
         let error = self.error.clone();
         let buffer = self.buffer_segments();
+        self.cursor_shape = buffer.cursor_shape;
         let palette = buffer.palette;
+        let cursor_shape = buffer.cursor_shape;
+        let cursor_position = buffer.cursor_position;
         let selection = self.selection_range();
         let scrollbar = {
             let max_offset = self.scroll_handle.max_offset();
@@ -219,20 +231,26 @@ impl Render for TerminalView {
 
                     for seg in segments {
                         let show_cursor = seg.is_cursor && self.cursor_visible;
+                        let is_block_cursor = matches!(
+                            cursor_shape,
+                            ansi::CursorShape::Block | ansi::CursorShape::HollowBlock
+                        );
+                        let text_color = if show_cursor && is_block_cursor {
+                            palette.cursor_color()
+                        } else {
+                            seg.fg
+                        };
+                        let bg_color = if show_cursor && is_block_cursor {
+                            palette.cursor_bg()
+                        } else {
+                            seg.bg
+                        };
                         line_content = line_content.child(
                             div()
                                 .whitespace_nowrap()
                                 .when(seg.is_bold, |this| this.font_weight(FontWeight::BOLD))
-                                .text_color(if show_cursor {
-                                    palette.cursor_color()
-                                } else {
-                                    seg.fg
-                                })
-                                .bg(if show_cursor {
-                                    palette.cursor_bg()
-                                } else {
-                                    seg.bg
-                                })
+                                .text_color(text_color)
+                                .bg(bg_color)
                                 .child(seg.text),
                         );
                     }
@@ -256,6 +274,41 @@ impl Render for TerminalView {
                                 .w(px(width))
                                 .bg(cx.theme().selection),
                         );
+                    }
+
+                    if let Some(pos) = cursor_position.filter(|pos| pos.line == idx) {
+                        if self.cursor_visible {
+                            match cursor_shape {
+                                ansi::CursorShape::Beam => {
+                                    let width = (self.cell_width * 0.15).max(2.0);
+                                    let left = pos.column as f32 * self.cell_width;
+                                    line_row = line_row.child(
+                                        div()
+                                            .absolute()
+                                            .left(px(left))
+                                            .top(px(0.0))
+                                            .w(px(width))
+                                            .h(px(self.cell_height))
+                                            .bg(palette.cursor_bg()),
+                                    );
+                                }
+                                ansi::CursorShape::Underline => {
+                                    let height = (self.cell_height * 0.15).clamp(1.0, 3.0);
+                                    let left = pos.column as f32 * self.cell_width;
+                                    let top = self.cell_height - height;
+                                    line_row = line_row.child(
+                                        div()
+                                            .absolute()
+                                            .left(px(left))
+                                            .top(px(top))
+                                            .w(px(self.cell_width))
+                                            .h(px(height))
+                                            .bg(palette.cursor_bg()),
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
                     }
 
                     lines_view = lines_view.child(line_row.child(line_content));

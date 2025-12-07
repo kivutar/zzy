@@ -1,7 +1,7 @@
 use crate::terminal::DEFAULT_FONT_SIZE;
 use gpui::{
     App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    Styled, Window,
+    SharedString, Styled, Window,
 };
 use gpui_component::group_box::GroupBoxVariant;
 use gpui_component::setting::{
@@ -14,6 +14,7 @@ use gpui_component::v_flex;
 pub struct AppSettings {
     pub font_size: f32,
     pub cursor_blink: bool,
+    pub cursor_shape: CursorShapeSetting,
 }
 
 impl Default for AppSettings {
@@ -21,6 +22,24 @@ impl Default for AppSettings {
         Self {
             font_size: DEFAULT_FONT_SIZE,
             cursor_blink: true,
+            cursor_shape: CursorShapeSetting::Block,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorShapeSetting {
+    Block,
+    Beam,
+    Underline,
+}
+
+impl CursorShapeSetting {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CursorShapeSetting::Block => "block",
+            CursorShapeSetting::Beam => "beam",
+            CursorShapeSetting::Underline => "underline",
         }
     }
 }
@@ -54,6 +73,11 @@ impl Render for SettingsView {
             max: max_font_size,
             step: 1.0,
         };
+        let cursor_shape_options = vec![
+            ("block".into(), "Block".into()),
+            ("beam".into(), "Beam".into()),
+            ("underline".into(), "Underline".into()),
+        ];
 
         v_flex()
             .p_neg_2()
@@ -110,6 +134,37 @@ impl Render for SettingsView {
                                     },
                                 )
                                 .default_value(default_settings.cursor_blink),
+                            ),
+                            SettingItem::new(
+                                "Cursor Shape",
+                                SettingField::dropdown(
+                                    cursor_shape_options,
+                                    {
+                                        let view = view.clone();
+                                        move |cx: &App| {
+                                            SharedString::from(
+                                                view.read(cx).settings.cursor_shape.as_str(),
+                                            )
+                                        }
+                                    },
+                                    {
+                                        let view = view.clone();
+                                        move |val: SharedString, cx: &mut App| {
+                                            let shape = match val.as_str() {
+                                                "beam" => CursorShapeSetting::Beam,
+                                                "underline" => CursorShapeSetting::Underline,
+                                                _ => CursorShapeSetting::Block,
+                                            };
+                                            let _ = view.update(cx, |view, cx| {
+                                                if view.settings.cursor_shape != shape {
+                                                    view.settings.cursor_shape = shape;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
+                                .default_value(default_settings.cursor_shape.as_str().to_string()),
                             ),
                         ]),
                     )]),
