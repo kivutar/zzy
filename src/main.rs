@@ -1,6 +1,5 @@
 mod colors;
 mod terminal;
-mod title_bar;
 
 use gpui::*;
 use gpui_component::ActiveTheme;
@@ -8,10 +7,9 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     tab::{Tab, TabBar},
-    v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode,
+    v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
 };
 use terminal::TerminalView;
-use title_bar::TitleBar;
 
 pub struct ZedTerm {
     tabs: Vec<TerminalTab>,
