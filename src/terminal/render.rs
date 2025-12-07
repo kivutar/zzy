@@ -13,11 +13,11 @@ use gpui::{
 };
 use gpui_component::{h_flex, v_flex, ActiveTheme};
 
-pub(crate) const DEFAULT_COLS: usize = 80;
-pub(crate) const DEFAULT_ROWS: usize = 24;
-pub(crate) const DEFAULT_CELL_WIDTH: f32 = 8.0;
-pub(crate) const DEFAULT_CELL_HEIGHT: f32 = 24.0;
-pub(crate) const DEFAULT_FONT_SIZE: f32 = 15.0;
+pub const DEFAULT_COLS: usize = 80;
+pub const DEFAULT_ROWS: usize = 24;
+pub const DEFAULT_CELL_WIDTH: f32 = 8.0;
+pub const DEFAULT_CELL_HEIGHT: f32 = 24.0;
+pub const DEFAULT_FONT_SIZE: f32 = 15.0;
 
 impl TerminalView {
     pub(crate) fn buffer_segments(&self) -> BufferSnapshot {

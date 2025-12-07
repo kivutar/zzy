@@ -3,6 +3,7 @@ mod pty;
 mod render;
 
 use crate::colors::Palette;
+use crate::settings::AppSettings;
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
     grid::Dimensions,
@@ -17,6 +18,7 @@ use gpui::{
 use gpui_component::ActiveTheme;
 use parking_lot::Mutex;
 use portable_pty::{Child, MasterPty};
+pub use render::DEFAULT_FONT_SIZE;
 use std::{io::Write, path::Path, sync::Arc, time::Duration};
 
 pub struct TerminalView {
@@ -42,6 +44,7 @@ pub struct TerminalView {
     selection_start: Option<CellPosition>,
     selection_end: Option<CellPosition>,
     is_selecting: bool,
+    cursor_blink_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -108,7 +111,7 @@ impl Dimensions for SimpleDimensions {
 }
 
 impl TerminalView {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>, settings: &AppSettings) -> Self {
         let focus_handle = cx.focus_handle();
         let (tx, rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx: tx.clone() };
@@ -120,7 +123,7 @@ impl TerminalView {
             &SimpleDimensions::new(render::DEFAULT_COLS, render::DEFAULT_ROWS),
             proxy,
         );
-        let font_size: f32 = render::DEFAULT_FONT_SIZE;
+        let font_size: f32 = settings.font_size;
         let scroll_handle = ScrollHandle::new();
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let program_name = Path::new(&shell)
@@ -152,6 +155,7 @@ impl TerminalView {
             selection_start: None,
             selection_end: None,
             is_selecting: false,
+            cursor_blink_enabled: settings.cursor_blink,
         };
 
         view.install_tab_passthrough(cx);
@@ -239,7 +243,11 @@ impl TerminalView {
                         .await;
                     if view
                         .update(&mut app, |view, cx| {
-                            view.cursor_visible = !view.cursor_visible;
+                            if view.cursor_blink_enabled {
+                                view.cursor_visible = !view.cursor_visible;
+                            } else {
+                                view.cursor_visible = true;
+                            }
                             cx.notify();
                         })
                         .is_err()
@@ -357,6 +365,27 @@ impl TerminalView {
             .filter(|s| !s.is_empty())
             .unwrap_or(&self.program_name);
         program.to_string()
+    }
+
+    pub(crate) fn apply_settings(
+        &mut self,
+        settings: &AppSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if (self.font_size - settings.font_size).abs() > f32::EPSILON {
+            self.font_size = settings.font_size;
+            self.cell_metrics_measured = false;
+            self.update_cell_metrics(window, cx);
+            if let Some(bounds) = self.last_bounds {
+                self.update_dimensions(bounds, cx);
+            }
+        }
+
+        self.cursor_blink_enabled = settings.cursor_blink;
+        if !self.cursor_blink_enabled {
+            self.cursor_visible = true;
+        }
     }
 }
 

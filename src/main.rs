@@ -1,4 +1,5 @@
 mod colors;
+mod settings;
 mod terminal;
 
 use gpui::*;
@@ -9,17 +10,21 @@ use gpui_component::{
     tab::{Tab, TabBar},
     v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
 };
+use settings::{AppSettings, SettingsView};
 use terminal::TerminalView;
 
 pub struct ZedTerm {
-    tabs: Vec<TerminalTab>,
+    tabs: Vec<TabContent>,
     selected_index: usize,
     focus_pending: bool,
     keystroke_sub: Option<Subscription>,
+    settings: AppSettings,
+    settings_dirty: bool,
 }
 
-struct TerminalTab {
-    terminal: Entity<TerminalView>,
+enum TabContent {
+    Terminal(Entity<TerminalView>),
+    Settings(Entity<SettingsView>),
 }
 
 impl ZedTerm {
@@ -29,6 +34,8 @@ impl ZedTerm {
             selected_index: 0,
             focus_pending: true,
             keystroke_sub: None,
+            settings: AppSettings::default(),
+            settings_dirty: false,
         };
 
         let view = cx.entity().downgrade();
@@ -39,31 +46,73 @@ impl ZedTerm {
             {
                 if let Some(view) = view.upgrade() {
                     let _ = view.update(cx, |zedterm, cx| {
-                        zedterm.add_tab(cx);
-                        if let Some(terminal) = zedterm.selected_terminal() {
-                            cx.focus_view(terminal, window);
-                        }
+                        zedterm.add_terminal_tab(cx);
+                        zedterm.focus_selected(window, cx);
                     });
                 }
                 cx.stop_propagation();
             }
         }));
 
-        zedterm.add_tab(cx);
+        zedterm.add_terminal_tab(cx);
         zedterm
     }
 
-    fn add_tab(&mut self, cx: &mut Context<Self>) {
-        let terminal = cx.new(|cx| TerminalView::new(cx));
+    fn add_terminal_tab(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings;
+        let terminal = cx.new(move |cx| TerminalView::new(cx, &settings));
         cx.observe(&terminal, |_zedterm, _terminal, cx| {
             // Propagate terminal changes (e.g., title updates) to the tab bar.
             cx.notify();
         })
         .detach();
-        self.tabs.push(TerminalTab { terminal });
+        self.tabs.push(TabContent::Terminal(terminal));
         self.selected_index = self.tabs.len() - 1;
         self.focus_pending = true;
         cx.notify();
+    }
+
+    fn ensure_settings_tab(&mut self, cx: &mut Context<Self>) {
+        if let Some(idx) = self
+            .tabs
+            .iter()
+            .position(|tab| matches!(tab, TabContent::Settings(_)))
+        {
+            self.selected_index = idx;
+            self.focus_pending = true;
+            cx.notify();
+            return;
+        }
+
+        let settings = self.settings;
+        let settings_view = cx.new(move |cx| SettingsView::new(cx, settings));
+        cx.observe(&settings_view, |zedterm, settings_view, cx| {
+            let settings = settings_view.read(cx).current_settings();
+            zedterm.settings = settings;
+            zedterm.settings_dirty = true;
+            cx.notify();
+        })
+        .detach();
+
+        self.tabs.push(TabContent::Settings(settings_view));
+        self.selected_index = self.tabs.len() - 1;
+        self.focus_pending = true;
+        cx.notify();
+    }
+
+    fn apply_settings_to_terminals(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.settings_dirty {
+            return;
+        }
+
+        for tab in &self.tabs {
+            if let TabContent::Terminal(term) = tab {
+                let settings = self.settings;
+                let _ = term.update(cx, |view, cx| view.apply_settings(&settings, window, cx));
+            }
+        }
+
+        self.settings_dirty = false;
     }
 
     fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -97,21 +146,26 @@ impl ZedTerm {
         cx.notify();
     }
 
-    fn selected_terminal(&self) -> Option<&Entity<TerminalView>> {
-        self.tabs.get(self.selected_index).map(|tab| &tab.terminal)
+    fn focus_selected(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(self.selected_index) {
+            match tab {
+                TabContent::Terminal(term) => cx.focus_view(term, window),
+                TabContent::Settings(view) => cx.focus_view(view, window),
+            }
+        }
     }
 }
 
 impl Render for ZedTerm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.apply_settings_to_terminals(window, cx);
+
         if self.tabs.is_empty() {
             return v_flex().child("No tabs");
         }
 
         if self.focus_pending {
-            if let Some(terminal) = self.selected_terminal() {
-                cx.focus_view(terminal, window);
-            }
+            self.focus_selected(window, cx);
             self.focus_pending = false;
         }
 
@@ -126,7 +180,22 @@ impl Render for ZedTerm {
                         .pr_2()
                         .justify_between()
                         .child("zedterm")
-                        .child(Icon::new(IconName::Settings2).cursor(CursorStyle::PointingHand)),
+                        .child(
+                            Button::new("open-settings")
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Settings2)
+                                .cursor(CursorStyle::PointingHand)
+                                .on_click({
+                                    let view = view.clone();
+                                    move |_, window, cx| {
+                                        let _ = view.update(cx, |zedterm, cx| {
+                                            zedterm.ensure_settings_tab(cx);
+                                            zedterm.focus_selected(window, cx);
+                                        });
+                                    }
+                                }),
+                        ),
                 ),
             )
             .child(
@@ -139,9 +208,7 @@ impl Render for ZedTerm {
                             let view = view.clone();
                             let _ = view.update(cx, |zedterm, cx| {
                                 zedterm.select_tab(*selected_index, cx);
-                                if let Some(terminal) = zedterm.selected_terminal() {
-                                    cx.focus_view(terminal, window);
-                                }
+                                zedterm.focus_selected(window, cx);
                             });
                         }
                     })
@@ -157,18 +224,23 @@ impl Render for ZedTerm {
                             .on_click(move |_, window, cx| {
                                 let view = view.clone();
                                 let _ = view.update(cx, |zedterm, cx| {
-                                    zedterm.add_tab(cx);
-                                    if let Some(terminal) = zedterm.selected_terminal() {
-                                        cx.focus_view(terminal, window);
-                                    }
+                                    zedterm.add_terminal_tab(cx);
+                                    zedterm.focus_selected(window, cx);
                                 });
                             })
                     })
                     .children(self.tabs.iter().enumerate().map(|(index, tab)| {
                         let close_view = view.clone();
-                        let label = tab.terminal.read(cx).tab_title();
+                        let (label, icon) = match tab {
+                            TabContent::Terminal(term) => {
+                                (term.read(cx).tab_title(), IconName::SquareTerminal)
+                            }
+                            TabContent::Settings(_) => {
+                                ("Settings".to_string(), IconName::Settings2)
+                            }
+                        };
                         Tab::new()
-                            .prefix(Icon::new(IconName::SquareTerminal))
+                            .prefix(Icon::new(icon))
                             .label(label)
                             .px_2()
                             .cursor(CursorStyle::PointingHand)
@@ -184,9 +256,7 @@ impl Render for ZedTerm {
                                         let view = close_view.clone();
                                         let _ = view.update(cx, |zedterm, cx| {
                                             zedterm.close_tab(index, cx);
-                                            if let Some(terminal) = zedterm.selected_terminal() {
-                                                cx.focus_view(terminal, window);
-                                            }
+                                            zedterm.focus_selected(window, cx);
                                         });
                                     }),
                             )
@@ -203,9 +273,10 @@ impl Render for ZedTerm {
                     .items_start()
                     .justify_start()
                     .overflow_hidden()
-                    .child(AnyView::from(
-                        self.tabs[self.selected_index].terminal.clone(),
-                    )),
+                    .child(match &self.tabs[self.selected_index] {
+                        TabContent::Terminal(term) => AnyView::from(term.clone()),
+                        TabContent::Settings(view) => AnyView::from(view.clone()),
+                    }),
             )
     }
 }
