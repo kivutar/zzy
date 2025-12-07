@@ -152,6 +152,7 @@ impl Render for ZedTerm {
                             .xsmall()
                             .mr_2()
                             .icon(IconName::Plus)
+                            .cursor(CursorStyle::PointingHand)
                             .tab_stop(false)
                             .on_click(move |_, window, cx| {
                                 let view = view.clone();
@@ -170,11 +171,13 @@ impl Render for ZedTerm {
                             .prefix(Icon::new(IconName::SquareTerminal))
                             .label(label)
                             .px_2()
+                            .cursor(CursorStyle::PointingHand)
                             .suffix(
                                 Button::new(("close-tab", index as u32))
                                     .ghost()
                                     .xsmall()
                                     .icon(IconName::Close)
+                                    .cursor(CursorStyle::PointingHand)
                                     .tab_stop(false)
                                     .on_click(move |_, window, cx| {
                                         cx.stop_propagation();
