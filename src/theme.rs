@@ -2,7 +2,6 @@
 pub enum ThemeChoice {
     RosePine,
     Dracula,
-    GithubDark,
     GruvboxDark,
     HamiMelonDark,
     AyuDark,
@@ -13,7 +12,6 @@ impl ThemeChoice {
         match self {
             ThemeChoice::RosePine => "rose-pine",
             ThemeChoice::Dracula => "dracula",
-            ThemeChoice::GithubDark => "github-dark",
             ThemeChoice::GruvboxDark => "gruvbox-dark",
             ThemeChoice::HamiMelonDark => "hami-melon-dark",
             ThemeChoice::AyuDark => "ayu-dark",

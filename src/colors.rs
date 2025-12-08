@@ -354,24 +354,6 @@ const DRACULA: ThemeOverrides = ThemeOverrides {
     border: 0x383a44ff,
 };
 
-const GITHUB_DARK: ThemeOverrides = ThemeOverrides {
-    indexed: [
-        0x0d1117ff, 0xff7b72ff, 0x3fb950ff, 0xd29922ff, 0x58a6ffff, 0xbc8cffff, 0x39c5cfff,
-        0xf0f6fcff, 0x6e7681ff, 0xff7b72ff, 0x3fb950ff, 0xe3b341ff, 0x79c0ffff, 0xd2a8ffff,
-        0x56d4ddff, 0xf0f6fcff,
-    ],
-    named: &[
-        (ansi::NamedColor::Foreground, 0xf0f6fcff),
-        (ansi::NamedColor::BrightForeground, 0xf0f6fcff),
-        (ansi::NamedColor::DimForeground, 0x6e7681ff),
-        (ansi::NamedColor::Background, 0x0d0d16ff),
-        (ansi::NamedColor::Cursor, 0x0d4daaff),
-    ],
-    default_fg: 0xf0f6fcff,
-    default_bg: 0x0d0d16ff,
-    border: 0x3d454dff,
-};
-
 const GRUVBOX_DARK: ThemeOverrides = ThemeOverrides {
     indexed: [
         0x282828ff, 0xcc241dff, 0x98971aff, 0xd79921ff, 0x458588ff, 0xb16286ff, 0x689d6aff,
@@ -412,7 +394,6 @@ pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOve
     match theme {
         crate::theme::ThemeChoice::RosePine => &ROSE_PINE,
         crate::theme::ThemeChoice::Dracula => &DRACULA,
-        crate::theme::ThemeChoice::GithubDark => &GITHUB_DARK,
         crate::theme::ThemeChoice::GruvboxDark => &GRUVBOX_DARK,
         crate::theme::ThemeChoice::AyuDark => &AYU_DARK,
         crate::theme::ThemeChoice::HamiMelonDark => &DEFAULT_THEME,

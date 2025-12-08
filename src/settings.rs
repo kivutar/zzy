@@ -116,7 +116,6 @@ impl Render for SettingsView {
         let theme_options = vec![
             ("rose-pine".into(), "Rosé Pine".into()),
             ("dracula".into(), "Dracula".into()),
-            ("github-dark".into(), "GitHub Dark".into()),
             ("gruvbox-dark".into(), "Gruvbox Dark".into()),
             ("hami-melon-dark".into(), "Hami Melon Dark".into()),
             ("ayu-dark".into(), "Ayu Dark".into()),
@@ -219,7 +218,6 @@ impl Render for SettingsView {
                                             let theme = match val.as_str() {
                                                 "rose-pine" => ThemeChoice::RosePine,
                                                 "dracula" => ThemeChoice::Dracula,
-                                                "github-dark" => ThemeChoice::GithubDark,
                                                 "gruvbox-dark" => ThemeChoice::GruvboxDark,
                                                 "ayu-dark" => ThemeChoice::AyuDark,
                                                 _ => ThemeChoice::HamiMelonDark,
