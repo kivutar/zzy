@@ -1,10 +1,12 @@
-use super::{BufferSnapshot, TerminalView};
+use super::{BufferSnapshot, TerminalEventProxy, TerminalView};
 use crate::colors::palette_for;
 use crate::colors::Palette;
+use crate::theme::ThemeChoice;
 use alacritty_terminal::{
     grid::Dimensions,
     index::{Column, Line},
     term::cell::Flags,
+    term::Term,
     vte::ansi,
 };
 use gpui::prelude::FluentBuilder as _;
@@ -22,10 +24,17 @@ pub const DEFAULT_FONT_SIZE: f32 = 15.0;
 
 impl TerminalView {
     pub(crate) fn buffer_segments(&self) -> BufferSnapshot {
-        let content = self.term.renderable_content();
-        let palette = Palette::new(content.colors, palette_for(self.theme));
+        Self::buffer_segments_for_term(&self.term, self.theme)
+    }
+
+    fn buffer_segments_for_term(
+        term: &Term<TerminalEventProxy>,
+        theme: ThemeChoice,
+    ) -> BufferSnapshot {
+        let content = term.renderable_content();
+        let palette = Palette::new(content.colors, palette_for(theme));
         let cursor = content.cursor;
-        let grid_ref = self.term.grid();
+        let grid_ref = term.grid();
         let total_lines = grid_ref.total_lines();
         let screen_lines = grid_ref.screen_lines();
         let history_size = total_lines.saturating_sub(screen_lines);
@@ -336,5 +345,54 @@ impl Render for TerminalView {
         }
 
         container
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::{SimpleDimensions, TerminalEventProxy};
+    use alacritty_terminal::{term::Config, vte::ansi};
+    use futures::channel::mpsc;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore]
+    fn profile_buffer_segments_large_history() {
+        let lines = 10_000;
+        let cols = 120;
+
+        let mut config = Config::default();
+        config.scrolling_history = lines;
+
+        let (tx, _rx) = mpsc::unbounded();
+        let proxy = TerminalEventProxy { tx };
+        let mut term =
+            Term::new(config, &SimpleDimensions::new(cols, DEFAULT_ROWS), proxy);
+
+        let mut parser: ansi::Processor = ansi::Processor::new();
+        let line_content = format!("{}\n", "a".repeat(cols.saturating_sub(1)));
+
+        let feed_started = Instant::now();
+        for _ in 0..lines {
+            parser.advance(&mut term, line_content.as_bytes());
+        }
+        let feed_elapsed = feed_started.elapsed();
+
+        let snapshot_started = Instant::now();
+        let snapshot =
+            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark);
+        let snapshot_elapsed = snapshot_started.elapsed();
+
+        let segment_count: usize = snapshot
+            .segments_by_line
+            .iter()
+            .map(|row| row.len())
+            .sum();
+
+        println!(
+            "loaded {} lines x {} cols -> feed {:?}, snapshot {:?}, segments {}",
+            lines, cols, feed_elapsed, snapshot_elapsed, segment_count
+        );
     }
 }
