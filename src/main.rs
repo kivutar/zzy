@@ -183,6 +183,8 @@ impl Render for ZedTerm {
         Theme::global_mut(cx).tab_bar_segmented = app_bg.into();
         Theme::global_mut(cx).title_bar = app_bg.into();
         Theme::global_mut(cx).border = app_border.into();
+        Theme::global_mut(cx).input = app_border.into();
+        Theme::global_mut(cx).ring = app_border.into();
         Theme::global_mut(cx).sidebar_border = app_border.into();
         Theme::global_mut(cx).title_bar_border = app_border.into();
         Theme::global_mut(cx).window_border = app_border.into();

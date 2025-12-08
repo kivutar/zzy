@@ -357,18 +357,18 @@ const DRACULA: ThemeOverrides = ThemeOverrides {
 const GITHUB_DARK: ThemeOverrides = ThemeOverrides {
     indexed: [
         0x0d1117ff, 0xff7b72ff, 0x3fb950ff, 0xd29922ff, 0x58a6ffff, 0xbc8cffff, 0x39c5cfff,
-        0xc9d1d9ff, 0x6e7681ff, 0xff7b72ff, 0x3fb950ff, 0xe3b341ff, 0x79c0ffff, 0xd2a8ffff,
+        0xf0f6fcff, 0x6e7681ff, 0xff7b72ff, 0x3fb950ff, 0xe3b341ff, 0x79c0ffff, 0xd2a8ffff,
         0x56d4ddff, 0xf0f6fcff,
     ],
     named: &[
-        (ansi::NamedColor::Foreground, 0xc9d1d9ff),
+        (ansi::NamedColor::Foreground, 0xf0f6fcff),
         (ansi::NamedColor::BrightForeground, 0xf0f6fcff),
         (ansi::NamedColor::DimForeground, 0x6e7681ff),
-        (ansi::NamedColor::Background, 0x0d1117ff),
-        (ansi::NamedColor::Cursor, 0x58a6ffff),
+        (ansi::NamedColor::Background, 0x0d0d16ff),
+        (ansi::NamedColor::Cursor, 0x0d4daaff),
     ],
-    default_fg: 0xc9d1d9ff,
-    default_bg: 0x0d1117ff,
+    default_fg: 0xf0f6fcff,
+    default_bg: 0x0d0d16ff,
     border: 0x3d454dff,
 };
 
