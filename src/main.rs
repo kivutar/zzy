@@ -177,6 +177,7 @@ impl Render for ZedTerm {
         Theme::global_mut(cx).background = app_bg.into();
         Theme::global_mut(cx).secondary = app_bg.into();
         Theme::global_mut(cx).foreground = app_fg.into();
+        Theme::global_mut(cx).tab_foreground = app_fg.into();
         Theme::global_mut(cx).tab_bar = app_bg.into();
         Theme::global_mut(cx).tab_bar_segmented = app_bg.into();
         Theme::global_mut(cx).title_bar = app_bg.into();
