@@ -26,6 +26,17 @@ impl TerminalView {
             return;
         }
 
+        if event.keystroke.key.eq_ignore_ascii_case("a")
+            && event.keystroke.modifiers.control
+            && event.keystroke.modifiers.shift
+        {
+            if self.select_all() {
+                cx.notify();
+            }
+            cx.stop_propagation();
+            return;
+        }
+
         if event.keystroke.key.eq_ignore_ascii_case("c")
             && event.keystroke.modifiers.control
             && event.keystroke.modifiers.shift
@@ -250,6 +261,27 @@ impl TerminalView {
         }
 
         Some(lines.join("\n"))
+    }
+
+    fn select_all(&mut self) -> bool {
+        let grid_ref = self.term.grid();
+        let columns = grid_ref.columns();
+        let total_lines = grid_ref.total_lines();
+        if columns == 0 || total_lines == 0 {
+            let changed =
+                self.selection_start.take().is_some() || self.selection_end.take().is_some();
+            return changed;
+        }
+
+        let start = Some(CellPosition { line: 0, column: 0 });
+        let end = Some(CellPosition {
+            line: total_lines.saturating_sub(1),
+            column: columns.saturating_sub(1),
+        });
+        let changed = self.selection_start != start || self.selection_end != end;
+        self.selection_start = start;
+        self.selection_end = end;
+        changed
     }
 
     pub(crate) fn word_bounds_at(&self, pos: CellPosition) -> Option<SelectionRange> {
