@@ -76,6 +76,8 @@ pub(crate) struct BufferSnapshot {
     segments_by_line: Vec<Vec<CellRender>>,
     palette: Palette,
     columns: usize,
+    total_lines: usize,
+    start_line: usize,
     cursor_shape: ansi::CursorShape,
     cursor_position: Option<CellPosition>,
 }

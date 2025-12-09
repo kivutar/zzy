@@ -24,18 +24,64 @@ pub const DEFAULT_FONT_SIZE: f32 = 15.0;
 
 impl TerminalView {
     pub(crate) fn buffer_segments(&self) -> BufferSnapshot {
-        Self::buffer_segments_for_term(&self.term, self.theme)
+        let (start_line, end_line) = self.visible_line_range().unwrap_or_else(|| {
+            let total = self.term.grid().total_lines();
+            (0, total)
+        });
+        Self::buffer_segments_for_term(&self.term, self.theme, start_line, end_line)
+    }
+
+    fn visible_line_range(&self) -> Option<(usize, usize)> {
+        let bounds = self.last_bounds?;
+        let grid_ref = self.term.grid();
+        let total_lines = grid_ref.total_lines();
+        if total_lines == 0 {
+            return Some((0, 0));
+        }
+
+        let cell_height = self.cell_height.max(1.0);
+        let viewport_height: f32 = bounds.size.height.into();
+        if viewport_height <= f32::EPSILON {
+            return None;
+        }
+
+        let max_visible = (viewport_height / cell_height).ceil() as usize;
+        let overscan = 8usize;
+        let offset = self.scroll_handle.offset();
+        let max_offset = self.scroll_handle.max_offset();
+        let mut offset_y: f32 = (-offset.y).into();
+        offset_y = offset_y.max(0.0);
+        let max_scroll_y: f32 = max_offset.height.into();
+        if max_scroll_y > f32::EPSILON {
+            offset_y = offset_y.min(max_scroll_y);
+        }
+
+        let mut start_line = (offset_y / cell_height).floor() as usize;
+        if start_line > total_lines {
+            start_line = total_lines;
+        }
+        start_line = start_line.saturating_sub(overscan);
+
+        let mut end_line = start_line + max_visible + overscan * 2;
+        end_line = end_line.min(total_lines);
+
+        Some((start_line, end_line))
     }
 
     fn buffer_segments_for_term(
         term: &Term<TerminalEventProxy>,
         theme: ThemeChoice,
+        start_line: usize,
+        end_line: usize,
     ) -> BufferSnapshot {
         let content = term.renderable_content();
         let palette = Palette::new(content.colors, palette_for(theme));
         let cursor = content.cursor;
         let grid_ref = term.grid();
         let total_lines = grid_ref.total_lines();
+        let clamped_end = end_line.min(total_lines);
+        let clamped_start = start_line.min(clamped_end);
+        let visible_lines = clamped_end.saturating_sub(clamped_start);
         let screen_lines = grid_ref.screen_lines();
         let history_size = total_lines.saturating_sub(screen_lines);
         let cols = grid_ref.columns();
@@ -52,10 +98,11 @@ impl TerminalView {
                 };
                 cols
             ];
-            total_lines
+            visible_lines
         ];
 
-        for line_idx in 0..total_lines {
+        for line_idx in clamped_start..clamped_end {
+            let snapshot_idx = line_idx - clamped_start;
             let grid_line = Line(line_idx as i32 - history_size as i32);
             for col_idx in 0..cols {
                 let cell = &grid_ref[grid_line][Column(col_idx)];
@@ -76,7 +123,7 @@ impl TerminalView {
                     && cursor.point.column == Column(col_idx)
                     && cursor.shape != ansi::CursorShape::Hidden;
                 let is_bold = cell.flags.contains(Flags::BOLD);
-                grid[line_idx][col_idx] = super::CellRender {
+                grid[snapshot_idx][col_idx] = super::CellRender {
                     text: ch,
                     fg,
                     bg,
@@ -127,6 +174,8 @@ impl TerminalView {
             segments_by_line: segments,
             palette,
             columns: cols,
+            total_lines,
+            start_line: clamped_start,
             cursor_shape: cursor.shape,
             cursor_position,
         }
@@ -144,6 +193,10 @@ impl Render for TerminalView {
         let cursor_shape = buffer.cursor_shape;
         let cursor_position = buffer.cursor_position;
         let selection = self.selection_range();
+        let total_height = buffer.total_lines as f32 * self.cell_height;
+        let top_padding = buffer.start_line as f32 * self.cell_height;
+        let visible_height = buffer.segments_by_line.len() as f32 * self.cell_height;
+        let bottom_padding = (total_height - top_padding - visible_height).max(0.0);
         let scrollbar = {
             let max_offset = self.scroll_handle.max_offset();
             self.last_bounds.and_then(|bounds| {
@@ -239,10 +292,14 @@ impl Render for TerminalView {
                             .child(err),
                     );
                 }
+                if top_padding > 0.0 {
+                    lines_view = lines_view.child(div().w_full().h(px(top_padding)));
+                }
                 for (idx, segments) in buffer.segments_by_line.into_iter().enumerate() {
-                    let line_highlight = selection
-                        .as_ref()
-                        .and_then(|range| self.selection_span_for_line(range, idx, buffer.columns));
+                    let real_line = buffer.start_line + idx;
+                    let line_highlight = selection.as_ref().and_then(|range| {
+                        self.selection_span_for_line(range, real_line, buffer.columns)
+                    });
                     let mut line_content = h_flex()
                         .w_full()
                         .whitespace_nowrap()
@@ -279,7 +336,7 @@ impl Render for TerminalView {
                     }
 
                     let mut line_row = div()
-                        .id(("line", idx as u32))
+                        .id(("line", real_line as u32))
                         .relative()
                         .w_full()
                         .whitespace_nowrap()
@@ -299,7 +356,7 @@ impl Render for TerminalView {
                         );
                     }
 
-                    if let Some(pos) = cursor_position.filter(|pos| pos.line == idx) {
+                    if let Some(pos) = cursor_position.filter(|pos| pos.line == real_line) {
                         if self.cursor_visible {
                             match cursor_shape {
                                 ansi::CursorShape::Beam => {
@@ -336,6 +393,9 @@ impl Render for TerminalView {
 
                     lines_view = lines_view.child(line_row.child(line_content));
                 }
+                if bottom_padding > 0.0 {
+                    lines_view = lines_view.child(div().w_full().h(px(bottom_padding)));
+                }
 
                 scroll_area.child(lines_view)
             });
@@ -350,8 +410,8 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::{SimpleDimensions, TerminalEventProxy};
+    use super::*;
     use alacritty_terminal::{term::Config, vte::ansi};
     use futures::channel::mpsc;
     use std::time::Instant;
@@ -367,8 +427,7 @@ mod tests {
 
         let (tx, _rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx };
-        let mut term =
-            Term::new(config, &SimpleDimensions::new(cols, DEFAULT_ROWS), proxy);
+        let mut term = Term::new(config, &SimpleDimensions::new(cols, DEFAULT_ROWS), proxy);
 
         let mut parser: ansi::Processor = ansi::Processor::new();
         let line_content = format!("{}\n", "a".repeat(cols.saturating_sub(1)));
@@ -381,18 +440,37 @@ mod tests {
 
         let snapshot_started = Instant::now();
         let snapshot =
-            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark);
+            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark, 0, lines);
         let snapshot_elapsed = snapshot_started.elapsed();
 
-        let segment_count: usize = snapshot
+        let window_lines = 200;
+        let range_start = lines.saturating_sub(window_lines);
+        let range_snapshot_started = Instant::now();
+        let range_snapshot = TerminalView::buffer_segments_for_term(
+            &term,
+            ThemeChoice::HamiMelonDark,
+            range_start,
+            lines,
+        );
+        let range_snapshot_elapsed = range_snapshot_started.elapsed();
+
+        let segment_count: usize = snapshot.segments_by_line.iter().map(|row| row.len()).sum();
+        let range_segment_count: usize = range_snapshot
             .segments_by_line
             .iter()
             .map(|row| row.len())
             .sum();
 
         println!(
-            "loaded {} lines x {} cols -> feed {:?}, snapshot {:?}, segments {}",
-            lines, cols, feed_elapsed, snapshot_elapsed, segment_count
+            "loaded {} lines x {} cols -> feed {:?}, snapshot {:?}, segments {} | window snapshot {:?}, segments {} (start {})",
+            lines,
+            cols,
+            feed_elapsed,
+            snapshot_elapsed,
+            segment_count,
+            range_snapshot_elapsed,
+            range_segment_count,
+            range_start
         );
     }
 }
