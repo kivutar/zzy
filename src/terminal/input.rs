@@ -19,6 +19,7 @@ impl TerminalView {
             if let Some(item) = cx.read_from_clipboard() {
                 if let Some(text) = item.text() {
                     self.cursor_visible = true;
+                    self.scroll_to_bottom_for_input(cx);
                     self.write_bytes(text.as_bytes());
                 }
             }
@@ -55,8 +56,8 @@ impl TerminalView {
 
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke) {
             self.cursor_visible = true;
+            self.scroll_to_bottom_for_input(cx);
             self.write_bytes(&bytes);
-            cx.notify();
         }
     }
 

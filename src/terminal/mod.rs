@@ -199,8 +199,9 @@ impl TerminalView {
                     .is_some_and(|focused| focused.contains(&focus, window))
             {
                 if let Some(entity) = weak.upgrade() {
-                    let _ = entity.update(cx, |view, _cx| {
+                    let _ = entity.update(cx, |view, cx| {
                         view.cursor_visible = true;
+                        view.scroll_to_bottom_for_input(cx);
                         if event.keystroke.modifiers.shift {
                             view.write_bytes(b"\x1b[Z");
                         } else {
@@ -380,6 +381,11 @@ impl TerminalView {
         let max_y: f32 = (-max_offset.height).into();
 
         (offset_y - max_y).abs() < 1.0 || offset_y < max_y
+    }
+
+    fn scroll_to_bottom_for_input(&mut self, cx: &mut Context<Self>) {
+        self.scroll_handle.scroll_to_bottom();
+        cx.notify();
     }
 
     pub fn tab_title(&self) -> String {
