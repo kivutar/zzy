@@ -74,7 +74,7 @@ impl TerminalView {
             return;
         }
 
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         if let Some(pos) = self.cell_position_from_point(event.position) {
             if event.click_count >= 2 {
                 if let Some(range) = self.word_bounds_at(pos) {
