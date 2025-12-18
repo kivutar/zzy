@@ -74,6 +74,8 @@ impl TerminalView {
             return;
         }
 
+        self.selection_started_with_single_click = false;
+        self.selection_dragged = false;
         window.focus(&self.focus_handle, cx);
         if let Some(pos) = self.cell_position_from_point(event.position) {
             if event.click_count >= 2 {
@@ -93,11 +95,18 @@ impl TerminalView {
                     }
                     self.selection_end = Some(pos);
                 } else {
+                    let had_selection = self.clear_selection();
                     self.selection_start = Some(pos);
                     self.selection_end = Some(pos);
+                    self.selection_started_with_single_click = true;
+                    if had_selection {
+                        cx.notify();
+                    }
                 }
                 self.is_selecting = true;
-                cx.notify();
+                if !self.selection_started_with_single_click {
+                    cx.notify();
+                }
             }
         }
         cx.stop_propagation();
@@ -114,6 +123,8 @@ impl TerminalView {
         }
 
         if let Some(pos) = self.cell_position_from_point(event.position) {
+            let _ = self.selection_start.get_or_insert(pos);
+            self.selection_dragged = true;
             self.selection_end = Some(pos);
             cx.notify();
         }
@@ -131,6 +142,13 @@ impl TerminalView {
         }
 
         self.is_selecting = false;
+        if self.selection_started_with_single_click && !self.selection_dragged {
+            if self.clear_selection() {
+                cx.notify();
+            }
+        }
+        self.selection_started_with_single_click = false;
+        self.selection_dragged = false;
         cx.stop_propagation();
     }
 
@@ -185,6 +203,11 @@ impl TerminalView {
     }
 
     pub(crate) fn selection_range(&self) -> Option<SelectionRange> {
+        if self.selection_started_with_single_click && !self.selection_dragged && self.is_selecting
+        {
+            return None;
+        }
+
         let start = self.selection_start?;
         let end = self.selection_end.unwrap_or(start);
         let grid = self.term.grid();

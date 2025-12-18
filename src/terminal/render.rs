@@ -543,20 +543,12 @@ mod tests {
 
         let (tx, _rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx };
-        let mut term = Term::new(
-            config,
-            &SimpleDimensions::new(16, DEFAULT_ROWS),
-            proxy,
-        );
+        let mut term = Term::new(config, &SimpleDimensions::new(16, DEFAULT_ROWS), proxy);
         let mut parser: ansi::Processor = ansi::Processor::new();
         parser.advance(&mut term, b"\t\x1b[31mred\x1b[0m\n");
 
-        let snapshot = TerminalView::buffer_segments_for_term(
-            &term,
-            ThemeChoice::HamiMelonDark,
-            0,
-            1,
-        );
+        let snapshot =
+            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark, 0, 1);
         let line = snapshot
             .segments_by_line
             .first()
