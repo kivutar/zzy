@@ -125,7 +125,11 @@ impl TerminalView {
                 }
 
                 let mut ch = String::new();
-                ch.push(cell.c);
+                let mut cell_char = cell.c;
+                if cell_char == '\t' {
+                    cell_char = ' ';
+                }
+                ch.push(cell_char);
                 if let Some(extra) = cell.zerowidth() {
                     for c in extra {
                         ch.push(*c);
@@ -531,6 +535,41 @@ mod tests {
     use alacritty_terminal::{term::Config, vte::ansi};
     use futures::channel::mpsc;
     use std::time::Instant;
+
+    #[test]
+    fn renders_tabs_as_spaces() {
+        let mut config = Config::default();
+        config.scrolling_history = 10;
+
+        let (tx, _rx) = mpsc::unbounded();
+        let proxy = TerminalEventProxy { tx };
+        let mut term = Term::new(
+            config,
+            &SimpleDimensions::new(16, DEFAULT_ROWS),
+            proxy,
+        );
+        let mut parser: ansi::Processor = ansi::Processor::new();
+        parser.advance(&mut term, b"\t\x1b[31mred\x1b[0m\n");
+
+        let snapshot = TerminalView::buffer_segments_for_term(
+            &term,
+            ThemeChoice::HamiMelonDark,
+            0,
+            1,
+        );
+        let line = snapshot
+            .segments_by_line
+            .first()
+            .expect("line 0")
+            .iter()
+            .map(|seg| seg.text.as_str())
+            .collect::<String>();
+
+        let prefix: String = line.chars().take_while(|c| *c != 'r').collect();
+        assert!(!prefix.contains('\t'));
+        assert!(prefix.chars().all(|c| c == ' '));
+        assert_eq!(prefix.len(), 8);
+    }
 
     #[test]
     #[ignore]

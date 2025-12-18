@@ -275,7 +275,11 @@ impl TerminalView {
                     continue;
                 }
 
-                line.push(cell.c);
+                let mut ch = cell.c;
+                if ch == '\t' {
+                    ch = ' ';
+                }
+                line.push(ch);
                 if let Some(extra) = cell.zerowidth() {
                     for c in extra {
                         line.push(*c);
