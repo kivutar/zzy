@@ -11,10 +11,15 @@ use alacritty_terminal::{
 };
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    canvas, div, px, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Window,
+    canvas, div, px, Context, FontWeight, InteractiveElement, IntoElement, Keystroke, MouseButton,
+    ParentElement, Render, ScrollWheelEvent, StatefulInteractiveElement, Styled, Window,
 };
-use gpui_component::{h_flex, v_flex, ActiveTheme};
+use gpui_component::{
+    h_flex,
+    kbd::Kbd,
+    menu::{ContextMenuExt, PopupMenuItem},
+    v_flex, ActiveTheme,
+};
 
 pub const DEFAULT_COLS: usize = 80;
 pub const DEFAULT_ROWS: usize = 24;
@@ -29,6 +34,15 @@ impl TerminalView {
             (0, total)
         });
         Self::buffer_segments_for_term(&self.term, self.theme, start_line, end_line)
+    }
+
+    pub(crate) fn handle_scroll_wheel(
+        &mut self,
+        _event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.notify();
     }
 
     fn visible_line_range(&self) -> Option<(usize, usize)> {
@@ -265,6 +279,7 @@ impl Render for TerminalView {
                     .overflow_y_scroll()
                     .scrollbar_width(px(8.0))
                     .track_scroll(&self.scroll_handle)
+                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
                     .child(
                         canvas(
                             {
@@ -404,7 +419,108 @@ impl Render for TerminalView {
             container = container.child(scrollbar);
         }
 
-        container
+        let shortcut = |keystroke: &str| Keystroke::parse(keystroke).ok().map(Kbd::new);
+
+        container.context_menu({
+            let view = view.clone();
+            move |menu, _window, cx| {
+                let (focus_handle, selection_available) = {
+                    let view_ref = view.read(cx);
+                    (view_ref.focus_handle.clone(), view_ref.has_selection())
+                };
+                let can_paste = cx
+                    .read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .is_some();
+                let copy_shortcut = shortcut("ctrl-shift-c");
+                let paste_shortcut = shortcut("ctrl-shift-v");
+                let select_all_shortcut = shortcut("ctrl-shift-a");
+                let select_none_shortcut = shortcut("ctrl-shift-d");
+
+                let build_row = |label: &'static str, shortcut: Option<Kbd>| {
+                    let mut row = h_flex()
+                        .w_full()
+                        .items_center()
+                        .justify_between()
+                        .child(label);
+                    if let Some(shortcut) = shortcut {
+                        row = row.child(shortcut);
+                    }
+                    row
+                };
+
+                let mut menu = menu.action_context(focus_handle);
+
+                menu = menu.item(
+                    PopupMenuItem::element({
+                        let shortcut = copy_shortcut.clone();
+                        move |_, _| build_row("Copy", shortcut.clone())
+                    })
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |view, cx| {
+                                view.copy_selection_to_clipboard(cx);
+                            });
+                        }
+                    })
+                    .disabled(!selection_available),
+                );
+
+                menu = menu.item(
+                    PopupMenuItem::element({
+                        let shortcut = paste_shortcut.clone();
+                        move |_, _| build_row("Paste", shortcut.clone())
+                    })
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |view, cx| {
+                                view.paste_from_clipboard(cx);
+                            });
+                        }
+                    })
+                    .disabled(!can_paste),
+                );
+
+                menu = menu.item(
+                    PopupMenuItem::element({
+                        let shortcut = select_all_shortcut.clone();
+                        move |_, _| build_row("Select All", shortcut.clone())
+                    })
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |view, cx| {
+                                if view.select_all() {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }),
+                );
+
+                menu = menu.item(
+                    PopupMenuItem::element({
+                        let shortcut = select_none_shortcut.clone();
+                        move |_, _| build_row("Select None", shortcut.clone())
+                    })
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |view, cx| {
+                                if view.clear_selection() {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    })
+                    .disabled(!selection_available),
+                );
+
+                menu
+            }
+        })
     }
 }
 

@@ -16,13 +16,7 @@ impl TerminalView {
             && event.keystroke.modifiers.control
             && event.keystroke.modifiers.shift
         {
-            if let Some(item) = cx.read_from_clipboard() {
-                if let Some(text) = item.text() {
-                    self.cursor_visible = true;
-                    self.scroll_to_bottom_for_input(cx);
-                    self.write_bytes(text.as_bytes());
-                }
-            }
+            self.paste_from_clipboard(cx);
             cx.stop_propagation();
             return;
         }
@@ -38,13 +32,22 @@ impl TerminalView {
             return;
         }
 
+        if event.keystroke.key.eq_ignore_ascii_case("d")
+            && event.keystroke.modifiers.control
+            && event.keystroke.modifiers.shift
+        {
+            if self.clear_selection() {
+                cx.notify();
+            }
+            cx.stop_propagation();
+            return;
+        }
+
         if event.keystroke.key.eq_ignore_ascii_case("c")
             && event.keystroke.modifiers.control
             && event.keystroke.modifiers.shift
         {
-            if let Some(text) = self.selected_text() {
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
-            }
+            self.copy_selection_to_clipboard(cx);
             cx.stop_propagation();
             return;
         }
@@ -129,6 +132,28 @@ impl TerminalView {
 
         self.is_selecting = false;
         cx.stop_propagation();
+    }
+
+    pub(crate) fn copy_selection_to_clipboard(&self, cx: &mut Context<Self>) -> bool {
+        if let Some(text) = self.selected_text() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            return true;
+        }
+
+        false
+    }
+
+    pub(crate) fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some(item) = cx.read_from_clipboard() {
+            if let Some(text) = item.text() {
+                self.cursor_visible = true;
+                self.scroll_to_bottom_for_input(cx);
+                self.write_bytes(text.as_bytes());
+                return true;
+            }
+        }
+
+        false
     }
 
     pub(crate) fn cell_position_from_point(
@@ -264,7 +289,17 @@ impl TerminalView {
         Some(lines.join("\n"))
     }
 
-    fn select_all(&mut self) -> bool {
+    pub(crate) fn clear_selection(&mut self) -> bool {
+        let changed = self.selection_start.take().is_some() || self.selection_end.take().is_some();
+        self.is_selecting = false;
+        changed
+    }
+
+    pub(crate) fn has_selection(&self) -> bool {
+        self.selection_range().is_some()
+    }
+
+    pub(crate) fn select_all(&mut self) -> bool {
         let grid_ref = self.term.grid();
         let columns = grid_ref.columns();
         let total_lines = grid_ref.total_lines();

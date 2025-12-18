@@ -13,7 +13,7 @@ use alacritty_terminal::{
 };
 use futures::channel::mpsc;
 use gpui::{
-    font, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, Hsla, Rgba, ScrollHandle,
+    font, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, Hsla, Point, Rgba, ScrollHandle,
     SharedString, Subscription, TextRun, WeakEntity, Window,
 };
 use parking_lot::Mutex;
@@ -186,6 +186,7 @@ impl TerminalView {
         view.start_pty(tx, cx);
         view.apply_cursor_shape(cursor_shape);
         view.start_cursor_blink(cx);
+        view.start_scroll_invalidation(cx);
         view
     }
 
@@ -274,6 +275,39 @@ impl TerminalView {
                                 view.cursor_visible = true;
                             }
                             cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn start_scroll_invalidation(&mut self, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
+        cx.spawn(move |_view: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let view = view.clone();
+            let mut app = cx.clone();
+            let mut last_offset: Option<Point<gpui::Pixels>> = None;
+            async move {
+                loop {
+                    app.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
+                    if view
+                        .update(&mut app, |view, cx| {
+                            // We virtualize the terminal buffer; if scroll offset changes outside wheel
+                            // events (e.g., scrollbar drag or programmatic scroll), force a redraw so
+                            // the visible slice updates immediately.
+                            let offset = view.scroll_handle.offset();
+                            let changed = last_offset.map_or(true, |last| last != offset);
+                            if changed {
+                                last_offset = Some(offset);
+                                cx.notify();
+                            }
                         })
                         .is_err()
                     {
