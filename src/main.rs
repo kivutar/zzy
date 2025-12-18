@@ -41,10 +41,21 @@ impl ZedTerm {
 
         let view = cx.entity().downgrade();
         zedterm.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
-            if event.keystroke.modifiers.control
-                && event.keystroke.modifiers.shift
-                && event.keystroke.key.eq_ignore_ascii_case("t")
+            let modifiers = &event.keystroke.modifiers;
+            let key = &event.keystroke.key;
+
+            if key.eq_ignore_ascii_case("f11")
+                && !modifiers.control
+                && !modifiers.alt
+                && !modifiers.shift
+                && !modifiers.platform
             {
+                window.toggle_fullscreen();
+                cx.stop_propagation();
+                return;
+            }
+
+            if modifiers.control && modifiers.shift && key.eq_ignore_ascii_case("t") {
                 if let Some(view) = view.upgrade() {
                     let _ = view.update(cx, |zedterm, cx| {
                         zedterm.add_terminal_tab(cx);
