@@ -8,8 +8,8 @@ mod theme;
 
 use colors::{theme_background, theme_foreground};
 use gpui_kit::component::{
-    button::{Button, ButtonVariants as _},
-    h_flex, v_flex, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
+    h_flex, tooltip::Tooltip, v_flex, ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode,
+    TitleBar, TITLE_BAR_HEIGHT,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -270,47 +270,62 @@ impl Render for Zzy {
         // background; default-colored terminal cells don't paint, so it shows through.
         let window_tint = self.context_color(&self.tabs[self.selected_index], cx);
         // Settings and fullscreen buttons, at the end of the title bar.
+        let in_title_bar = self.settings.tabs_in_title_bar;
+        let fullscreen = window.is_fullscreen();
+        // Buttons at the end of the title bar, next to the window controls. With
+        // the tabs in the title bar, "+" moves here from the tab bar.
         let title_buttons = h_flex()
-            .gap_1()
-            .child(
-                Button::new("open-settings")
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Settings2)
-                    .tooltip(i18n::tr("tab.settings"))
-                    .cursor(CursorStyle::PointingHand)
-                    .on_click({
-                        let view = view.clone();
-                        move |_, window, cx| {
-                            view.update(cx, |zzy, cx| {
-                                zzy.ensure_settings_tab(window, cx);
-                                zzy.focus_selected(window, cx);
-                            });
-                        }
-                    }),
-            )
-            .child(
-                Button::new("toggle-fullscreen")
-                    .ghost()
-                    .xsmall()
-                    .icon(if window.is_fullscreen() {
-                        IconName::Minimize
-                    } else {
-                        IconName::Maximize
-                    })
-                    .tooltip(if window.is_fullscreen() {
-                        i18n::tr("window.exit_fullscreen")
-                    } else {
-                        i18n::tr("window.fullscreen")
-                    })
-                    .cursor(CursorStyle::PointingHand)
-                    .on_click(|_, window, _| window.toggle_fullscreen()),
-            );
+            .h_full()
+            .when(in_title_bar, |this| {
+                let view = view.clone();
+                this.child(title_bar_button(
+                    "add-tab",
+                    IconName::Plus,
+                    i18n::tr("tab.new"),
+                    move |window, cx| {
+                        view.update(cx, |zzy, cx| {
+                            zzy.add_terminal_tab(window, cx);
+                            zzy.focus_selected(window, cx);
+                        })
+                    },
+                    cx,
+                ))
+            })
+            .child(title_bar_button(
+                "open-settings",
+                IconName::Settings2,
+                i18n::tr("tab.settings"),
+                {
+                    let view = view.clone();
+                    move |window, cx| {
+                        view.update(cx, |zzy, cx| {
+                            zzy.ensure_settings_tab(window, cx);
+                            zzy.focus_selected(window, cx);
+                        })
+                    }
+                },
+                cx,
+            ))
+            .child(title_bar_button(
+                "toggle-fullscreen",
+                if fullscreen {
+                    IconName::Minimize
+                } else {
+                    IconName::Maximize
+                },
+                if fullscreen {
+                    i18n::tr("window.exit_fullscreen")
+                } else {
+                    i18n::tr("window.fullscreen")
+                },
+                |window, _| window.toggle_fullscreen(),
+                cx,
+            ));
         // Render custom title bar on top of Root view.
         // The window background (painted once by Root) shows through
         // the title bar, tabs and terminal so translucency is uniform.
         let title_bar = TitleBar::new().bg(transparent_black());
-        let header = if self.settings.tabs_in_title_bar {
+        let header = if in_title_bar {
             // The tabs' own line (with its gap under the active tab) replaces the
             // title bar's border, spanning the whole bar: its edges are recorded
             // here during prepaint, before the line paints.
@@ -337,8 +352,6 @@ impl Render for Zzy {
                         .child(
                             h_flex()
                                 .size_full()
-                                .pr_2()
-                                .gap_2()
                                 // Tabs sit on the bar's bottom edge, like a tab bar.
                                 .child(
                                     v_flex()
@@ -357,8 +370,7 @@ impl Render for Zzy {
                 .child(
                     title_bar.child(
                         h_flex()
-                            .w_full()
-                            .pr_2()
+                            .size_full()
                             .justify_between()
                             .child("zzy")
                             .child(title_buttons),
@@ -450,6 +462,47 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
         theme.table_row_border = border;
         theme.mono_font_family = settings::DEFAULT_FONT_FAMILY.into();
     });
+}
+
+/// A title bar button drawn like gpui-kit's window controls (a full-height
+/// square, small icon, secondary hover colors), so the buttons next to
+/// minimize and maximize read as one set.
+fn title_bar_button(
+    id: &'static str,
+    icon: IconName,
+    tooltip: SharedString,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+    cx: &App,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let (hover_bg, active_bg, hover_fg) = (
+        theme.secondary_hover,
+        theme.secondary_active,
+        theme.secondary_foreground,
+    );
+    div()
+        .id(id)
+        .flex()
+        .w(TITLE_BAR_HEIGHT)
+        .h_full()
+        .flex_shrink_0()
+        .justify_center()
+        .items_center()
+        .text_color(theme.foreground)
+        .hover(move |style| style.bg(hover_bg).text_color(hover_fg))
+        .active(move |style| style.bg(active_bg).text_color(hover_fg))
+        // Like the window controls: the press never moves the window, and
+        // the click (or a double click) never reaches the title bar.
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            on_click(window, cx);
+        })
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .child(Icon::new(icon).small())
 }
 
 const WINDOW_STATE_SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);

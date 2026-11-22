@@ -122,22 +122,25 @@ impl Zzy {
                                 });
                             }
                         })
-                        .suffix({
+                        // In the title bar, "+" sits with the title bar buttons.
+                        .when(!in_title_bar, |this| {
                             let view = view.clone();
-                            Button::new("add-tab")
-                                .ghost()
-                                .xsmall()
-                                .mr_2()
-                                .icon(IconName::Plus)
-                                .cursor(CursorStyle::PointingHand)
-                                .tab_stop(false)
-                                .on_click(move |_, window, cx| {
-                                    let view = view.clone();
-                                    view.update(cx, |zzy, cx| {
-                                        zzy.add_terminal_tab(window, cx);
-                                        zzy.focus_selected(window, cx);
-                                    });
-                                })
+                            this.suffix(
+                                Button::new("add-tab")
+                                    .ghost()
+                                    .xsmall()
+                                    .mr_2()
+                                    .icon(IconName::Plus)
+                                    .cursor(CursorStyle::PointingHand)
+                                    .tab_stop(false)
+                                    .on_click(move |_, window, cx| {
+                                        let view = view.clone();
+                                        view.update(cx, |zzy, cx| {
+                                            zzy.add_terminal_tab(window, cx);
+                                            zzy.focus_selected(window, cx);
+                                        });
+                                    }),
+                            )
                         })
                         .children(self.tabs.iter().enumerate().map(|(index, tab)| {
                             let close_view = view.clone();

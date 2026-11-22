@@ -154,6 +154,9 @@ window.exit_fullscreen:
 tab.settings:
   en: Settings
   ja: 設定
+tab.new:
+  en: New Tab (Ctrl+Shift+T)
+  ja: 新しいタブ (Ctrl+Shift+T)
 tab.none:
   en: No tabs
   ja: タブがありません
