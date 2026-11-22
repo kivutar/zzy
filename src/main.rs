@@ -8,8 +8,8 @@ mod theme;
 
 use colors::{theme_background, theme_foreground};
 use gpui_kit::component::{
-    h_flex, tooltip::Tooltip, v_flex, ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode,
-    TitleBar, TITLE_BAR_HEIGHT,
+    h_flex, tooltip::Tooltip, v_flex, window_corner_radii, ActiveTheme, Icon, IconName, Root,
+    Sizable, Theme, ThemeMode, TitleBar, TITLE_BAR_HEIGHT,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -379,22 +379,24 @@ impl Render for Zzy {
                 .child(self.render_tab_bar(None, cx))
         };
 
-        // gpui-kit only borders the window edges that aren't tiled; optionally
-        // draw the same border on the others (maximized, fullscreen, snapped).
-        let extra_border = if self.settings.border_when_maximized {
-            borderless_edges(window)
-        } else {
-            Edges::default()
-        };
+        // The part of the window border we draw, inside gpui-kit's frame.
+        let border = border_widths(&self.settings, window);
+        // Rounded like the frame's corners, one pixel in (inside its line).
+        let radii = window_corner_radii(window, cx);
+        let inner = |radius: Pixels| (radius - px(1.)).max(px(0.));
 
         v_flex()
             .size_full()
             .when_some(window_tint, |this, color| this.bg(color.opacity(0.1)))
             .border_color(cx.theme().window_border)
-            .when(extra_border.top, |this| this.border_t_1())
-            .when(extra_border.bottom, |this| this.border_b_1())
-            .when(extra_border.left, |this| this.border_l_1())
-            .when(extra_border.right, |this| this.border_r_1())
+            .border_t(border.top)
+            .border_b(border.bottom)
+            .border_l(border.left)
+            .border_r(border.right)
+            .rounded_tl(inner(radii.top_left))
+            .rounded_tr(inner(radii.top_right))
+            .rounded_bl(inner(radii.bottom_left))
+            .rounded_br(inner(radii.bottom_right))
             .child(header)
             .child(
                 v_flex()
@@ -477,18 +479,57 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
     });
 }
 
-/// The window edges gpui-kit's frame leaves without a border: the tiled ones
-/// (all of them when maximized). Under server-side decorations it draws no
-/// frame at all, and the window manager's goes away in fullscreen.
-fn borderless_edges(window: &Window) -> Edges<bool> {
+/// How an edge of the window is framed before we draw anything.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+enum EdgeFrame {
+    /// gpui-kit's fixed 1px border.
+    #[default]
+    Kit,
+    /// Nothing: a tiled edge (maximized, snapped), or fullscreen.
+    Bare,
+    /// The window manager's frame (server-side decorations).
+    WindowManager,
+}
+
+fn edge_frames(window: &Window) -> Edges<EdgeFrame> {
+    let frame = |tiled: bool| {
+        if tiled {
+            EdgeFrame::Bare
+        } else {
+            EdgeFrame::Kit
+        }
+    };
     match window.window_decorations() {
         Decorations::Client { tiling } => Edges {
-            top: tiling.top,
-            bottom: tiling.bottom,
-            left: tiling.left,
-            right: tiling.right,
+            top: frame(tiling.top),
+            bottom: frame(tiling.bottom),
+            left: frame(tiling.left),
+            right: frame(tiling.right),
         },
-        Decorations::Server => Edges::all(window.is_fullscreen()),
+        Decorations::Server if window.is_fullscreen() => Edges::all(EdgeFrame::Bare),
+        Decorations::Server => Edges::all(EdgeFrame::WindowManager),
+    }
+}
+
+/// The border we draw on each edge, in the theme's window border color, so
+/// that every edge shows `border_width` in all: the rest of it inside
+/// gpui-kit's 1px line, or all of it on bare edges when asked to.
+fn border_widths(settings: &AppSettings, window: &Window) -> Edges<Pixels> {
+    let frames = edge_frames(window);
+    let width = |frame| px(border_width(settings, frame));
+    Edges {
+        top: width(frames.top),
+        bottom: width(frames.bottom),
+        left: width(frames.left),
+        right: width(frames.right),
+    }
+}
+
+fn border_width(settings: &AppSettings, frame: EdgeFrame) -> f32 {
+    match frame {
+        EdgeFrame::Kit => (settings.border_width - 1.0).max(0.0),
+        EdgeFrame::Bare if settings.border_when_maximized => settings.border_width,
+        EdgeFrame::Bare | EdgeFrame::WindowManager => 0.0,
     }
 }
 
@@ -608,7 +649,27 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::moved_index;
+    use super::{border_width, moved_index, AppSettings, EdgeFrame};
+
+    #[test]
+    fn border_adds_up_to_the_configured_width() {
+        let settings = |border_width, border_when_maximized| AppSettings {
+            border_width,
+            border_when_maximized,
+            ..Default::default()
+        };
+        // gpui-kit's 1px line plus ours.
+        assert_eq!(border_width(&settings(1.0, false), EdgeFrame::Kit), 0.0);
+        assert_eq!(border_width(&settings(4.0, false), EdgeFrame::Kit), 3.0);
+        // Bare (maximized, fullscreen) edges only when asked.
+        assert_eq!(border_width(&settings(4.0, false), EdgeFrame::Bare), 0.0);
+        assert_eq!(border_width(&settings(4.0, true), EdgeFrame::Bare), 4.0);
+        // Never on top of the window manager's frame.
+        assert_eq!(
+            border_width(&settings(4.0, true), EdgeFrame::WindowManager),
+            0.0
+        );
+    }
 
     /// Simulates the move on a list and checks `moved_index` against it.
     #[test]

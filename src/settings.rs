@@ -52,6 +52,8 @@ pub struct AppSettings {
     pub tabs_in_title_bar: bool,
     /// Keep the window border when maximized, fullscreen or snapped.
     pub border_when_maximized: bool,
+    /// Width of the window border, in pixels.
+    pub border_width: f32,
 }
 
 impl Default for AppSettings {
@@ -79,6 +81,7 @@ impl Default for AppSettings {
             tint_ssh: true,
             tabs_in_title_bar: false,
             border_when_maximized: false,
+            border_width: 1.0,
         }
     }
 }
@@ -90,6 +93,7 @@ impl AppSettings {
             |v: f64, (min, max): (f64, f64)| if v.is_nan() { min } else { v.clamp(min, max) };
         self.font_size = clamp(self.font_size as f64, FONT_SIZE_RANGE) as f32;
         self.padding = clamp(self.padding as f64, PADDING_RANGE) as f32;
+        self.border_width = clamp(self.border_width as f64, BORDER_WIDTH_RANGE).round() as f32;
         self.line_height = clamp(self.line_height as f64, LINE_HEIGHT_RANGE) as f32;
         self.scrollback = clamp(self.scrollback as f64, SCROLLBACK_RANGE) as usize;
         self.background_opacity =
@@ -291,6 +295,8 @@ const NEW_TAB_DIRECTORIES: Choices<NewTabDirectory> = &[
 
 pub(crate) const FONT_SIZE_RANGE: (f64, f64) = (8.0, 72.0);
 const PADDING_RANGE: (f64, f64) = (0.0, 48.0);
+/// gpui-kit always draws a 1px border, so it can't go below that.
+const BORDER_WIDTH_RANGE: (f64, f64) = (1.0, 10.0);
 const LINE_HEIGHT_RANGE: (f64, f64) = (1.0, 2.0);
 const SCROLLBACK_RANGE: (f64, f64) = (0.0, 50_000.0);
 /// In percent. Below ~10% the window becomes hard to find.
@@ -445,6 +451,13 @@ impl Render for SettingsView {
         );
         let tint_root = switch(&view, |s| s.tint_root, |s, v| s.tint_root = v);
         let tint_ssh = switch(&view, |s| s.tint_ssh, |s, v| s.tint_ssh = v);
+        let border_width = number(
+            &view,
+            BORDER_WIDTH_RANGE,
+            1.0,
+            |s| s.border_width as f64,
+            |s, v| s.border_width = v.round() as f32,
+        );
         let border_when_maximized = switch(
             &view,
             |s| s.border_when_maximized,
@@ -508,6 +521,7 @@ impl Render for SettingsView {
                                     tr("settings.tabs_in_title_bar"),
                                     tabs_in_title_bar,
                                 ),
+                                SettingItem::new(tr("settings.border_width"), border_width),
                                 SettingItem::new(
                                     tr("settings.border_when_maximized"),
                                     border_when_maximized,
