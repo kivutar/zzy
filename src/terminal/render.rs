@@ -17,8 +17,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    canvas, div, px, Context, FontWeight, InteractiveElement, IntoElement, Keystroke, MouseButton,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Window,
+    canvas, div, px, Context, FontWeight, Hsla, InteractiveElement, IntoElement, Keystroke,
+    MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
 };
 
 pub const DEFAULT_COLS: usize = 80;
@@ -33,7 +33,13 @@ impl TerminalView {
             let total = self.term.grid().total_lines();
             (0, total)
         });
-        Self::buffer_segments_for_term(&self.term, self.theme, start_line, end_line)
+        Self::buffer_segments_for_term(
+            &self.term,
+            self.theme,
+            self.bold_text.bright_colors(),
+            start_line,
+            end_line,
+        )
     }
 
     fn visible_line_range(&self) -> Option<(usize, usize)> {
@@ -76,6 +82,7 @@ impl TerminalView {
     fn buffer_segments_for_term(
         term: &Term<TerminalEventProxy>,
         theme: ThemeChoice,
+        bold_is_bright: bool,
         start_line: usize,
         end_line: usize,
     ) -> BufferSnapshot {
@@ -127,7 +134,7 @@ impl TerminalView {
                     }
                 }
 
-                let (fg, bg) = palette.fg_bg(cell);
+                let (fg, bg) = palette.fg_bg(cell, bold_is_bright);
                 let is_cursor = cursor.point.line == grid_line
                     && cursor.point.column == Column(col_idx)
                     && cursor.shape != ansi::CursorShape::Hidden;
@@ -251,7 +258,7 @@ impl Render for TerminalView {
                     (seg.fg, seg.bg)
                 };
                 div()
-                    .when(seg.is_bold && !self.ignore_bold, |this| {
+                    .when(seg.is_bold && self.bold_text.bold_font(), |this| {
                         this.font_weight(FontWeight::BOLD)
                     })
                     .text_color(fg)
@@ -337,6 +344,14 @@ impl Render for TerminalView {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .child(scroll_area)
             .children(self.render_scrollbar(cx))
+            .when(self.bell_flash_visible(), |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(Hsla::from(palette.default_fg).opacity(0.15)),
+                )
+            })
             .context_menu(move |menu, _window, cx| {
                 let (focus_handle, has_selection) = {
                     let view = view.read(cx);
@@ -415,7 +430,7 @@ impl TerminalView {
         Some(
             div()
                 .absolute()
-                .right(px(-4.0))
+                .right(px(-self.padding.min(4.0)))
                 .top(px(progress * track_height))
                 .w(px(8.0))
                 .h(px(thumb_height))
@@ -445,7 +460,7 @@ mod tests {
         parser.advance(&mut term, b"\t\x1b[31mred\x1b[0m\n");
 
         let snapshot =
-            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark, 0, 1);
+            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark, false, 0, 1);
         let line = snapshot
             .segments_by_line
             .first()
@@ -483,8 +498,13 @@ mod tests {
         let feed_elapsed = feed_started.elapsed();
 
         let snapshot_started = Instant::now();
-        let snapshot =
-            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark, 0, lines);
+        let snapshot = TerminalView::buffer_segments_for_term(
+            &term,
+            ThemeChoice::HamiMelonDark,
+            false,
+            0,
+            lines,
+        );
         let snapshot_elapsed = snapshot_started.elapsed();
 
         let window_lines = 200;
@@ -493,6 +513,7 @@ mod tests {
         let range_snapshot = TerminalView::buffer_segments_for_term(
             &term,
             ThemeChoice::HamiMelonDark,
+            false,
             range_start,
             lines,
         );

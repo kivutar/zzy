@@ -13,10 +13,25 @@ impl TerminalView {
     pub(crate) fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let keystroke = &event.keystroke;
+        // Zoom: Ctrl+= / Ctrl++ / Ctrl+- / Ctrl+0 (Ptyxis, GNOME Console, WT).
+        if keystroke.modifiers.control && !keystroke.modifiers.alt {
+            let steps = match keystroke.key.as_str() {
+                "=" | "+" => Some(1.0),
+                "-" => Some(-1.0),
+                "0" => Some(0.0),
+                _ => None,
+            };
+            if let Some(steps) = steps {
+                self.zoom(steps, window, cx);
+                cx.stop_propagation();
+                return;
+            }
+        }
+
         if keystroke.modifiers.control && keystroke.modifiers.shift {
             let handled = match keystroke.key.to_ascii_lowercase().as_str() {
                 "c" => {

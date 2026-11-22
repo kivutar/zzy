@@ -104,9 +104,19 @@ impl TerminalView {
     pub(crate) fn handle_scroll(
         &mut self,
         event: &ScrollEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Ctrl+wheel zooms, even when a program captures the mouse.
+        if event.modifiers.control {
+            cx.stop_propagation();
+            let steps = self.wheel_steps(event);
+            if steps != 0 {
+                self.zoom(steps as f32, window, cx);
+            }
+            return;
+        }
+
         let mode = *self.term.mode();
         let report = self.reports_mouse(&event.modifiers);
         // In the alternate screen (less, man...) there is no scrollback; turn
@@ -121,15 +131,12 @@ impl TerminalView {
         }
         cx.stop_propagation();
 
-        let delta: f32 = event.delta.pixel_delta(px(self.cell_height)).y.into();
-        let lines = self.scroll_lines_remainder + delta / self.cell_height.max(1.0);
-        let whole = lines.trunc();
-        self.scroll_lines_remainder = lines - whole;
-        let count = whole.abs() as usize;
+        let steps = self.wheel_steps(event);
+        let count = steps.unsigned_abs() as usize;
         if count == 0 {
             return;
         }
-        let up = whole > 0.0;
+        let up = steps > 0;
 
         if report {
             let Some(cell) = self.viewport_cell(event.position) else {
@@ -149,6 +156,16 @@ impl TerminalView {
             };
             self.write_bytes(&seq.repeat(count));
         }
+    }
+
+    /// Whole wheel notches (lines) in this event, positive = up. Fractional
+    /// trackpad deltas are carried over to the next event.
+    fn wheel_steps(&mut self, event: &ScrollEvent) -> i32 {
+        let delta: f32 = event.delta.pixel_delta(px(self.cell_height)).y.into();
+        let lines = self.scroll_lines_remainder + delta / self.cell_height.max(1.0);
+        let whole = lines.trunc();
+        self.scroll_lines_remainder = lines - whole;
+        whole as i32
     }
 
     /// The cell under `position`, relative to the visible screen (what the

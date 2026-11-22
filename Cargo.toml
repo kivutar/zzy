@@ -12,6 +12,9 @@ portable-pty = "0.9.0"
 alacritty_terminal = "0.25.1"
 parking_lot = "0.12.5"
 futures = "0.3"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.2"
+shell-words = "1.1.1"
 
 # Workaround for KWin (6.8) offsetting the ext-background-effect blur region by
 # the window geometry, although the protocol defines it in surface-local

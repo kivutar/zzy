@@ -1,4 +1,5 @@
 use super::{TerminalMsg, TerminalView};
+use crate::settings::AppSettings;
 use anyhow::Context as _;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::Context;
@@ -56,13 +57,19 @@ impl TerminalView {
             .try_clone_reader()
             .context("failed to clone pty reader")?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let mut cmd = CommandBuilder::new(shell);
+        let (program, args) = self.argv.split_first().context("empty command")?;
+        let mut cmd = CommandBuilder::new(program);
+        cmd.args(args);
         // When the app is launched from a desktop launcher, TERM is usually missing.
         // Provide a sensible default so tools like git/less do not warn about a
         // non-functional terminal.
         cmd.env("TERM", normalize_term_env(std::env::var_os("TERM")));
-        if let Ok(cwd) = std::env::current_dir() {
+        if let Some(cwd) = self
+            .cwd
+            .clone()
+            .filter(|dir| dir.is_dir())
+            .or_else(|| std::env::current_dir().ok())
+        {
             cmd.cwd(cwd);
         }
         let child = pair.slave.spawn_command(cmd)?;
@@ -108,6 +115,27 @@ impl TerminalView {
         })
         .detach();
     }
+}
+
+/// The command to run: the custom command from the settings, split like a
+/// shell would, or the user's `$SHELL` (with `-l` when a login shell is wanted).
+pub(crate) fn command_argv(settings: &AppSettings) -> Result<Vec<String>, String> {
+    let custom = settings.command.trim();
+    if !custom.is_empty() {
+        let argv = shell_words::split(custom).map_err(|err| format!("Invalid command: {err}"))?;
+        if !argv.is_empty() {
+            return Ok(argv);
+        }
+    }
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.is_empty())
+        .unwrap_or_else(|| "/bin/sh".to_string());
+    let mut argv = vec![shell];
+    if settings.login_shell {
+        argv.push("-l".to_string());
+    }
+    Ok(argv)
 }
 
 pub(crate) fn normalize_term_env(term: Option<OsString>) -> OsString {

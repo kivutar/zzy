@@ -8810,6 +8810,9 @@ dependencies = [
  "gpui-kit",
  "parking_lot",
  "portable-pty",
+ "serde",
+ "shell-words",
+ "toml 1.2.2+spec-1.1.0",
 ]
 
 [[package]]

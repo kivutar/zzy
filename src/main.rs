@@ -1,4 +1,5 @@
 mod colors;
+mod config;
 mod settings;
 mod terminal;
 mod theme;
@@ -11,8 +12,8 @@ use gpui_kit::component::{
     v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
 };
 use gpui_kit::*;
-use settings::{AppSettings, SettingsView};
-use terminal::{TerminalExited, TerminalView};
+use settings::{AppSettings, NewTabDirectory, SettingsView};
+use terminal::{TerminalBell, TerminalExited, TerminalView};
 
 pub struct ZedTerm {
     tabs: Vec<TabContent>,
@@ -21,6 +22,11 @@ pub struct ZedTerm {
     keystroke_sub: Option<Subscription>,
     settings: AppSettings,
     settings_dirty: bool,
+    window_state: config::WindowState,
+    /// A terminal rang the bell; played from `render`, which has the window.
+    bell_pending: bool,
+    _window_subscriptions: Vec<Subscription>,
+    _save_window_state: Option<Task<()>>,
 }
 
 enum TabContent {
@@ -29,15 +35,38 @@ enum TabContent {
 }
 
 impl ZedTerm {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(settings: AppSettings, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut zedterm = Self {
             tabs: Vec::new(),
             selected_index: 0,
             focus_pending: true,
             keystroke_sub: None,
-            settings: AppSettings::default(),
+            settings,
             settings_dirty: false,
+            window_state: window_state_of(window),
+            bell_pending: false,
+            _window_subscriptions: Vec::new(),
+            _save_window_state: None,
         };
+
+        // Remember the window size. Saved shortly after each resize rather than
+        // on exit: closing through the title bar removes the window directly
+        // (no should-close callback) and the app exits without quit hooks.
+        zedterm._window_subscriptions =
+            vec![cx.observe_window_bounds(window, |zedterm, window, cx| {
+                let state = window_state_of(window);
+                if state == zedterm.window_state {
+                    return;
+                }
+                zedterm.window_state = state;
+                // Replacing the task cancels the pending save: one write per resize.
+                zedterm._save_window_state = Some(cx.spawn(async move |_, cx| {
+                    cx.background_executor()
+                        .timer(WINDOW_STATE_SAVE_DELAY)
+                        .await;
+                    config::save_window_state(&state);
+                }));
+            })];
 
         let view = cx.entity().downgrade();
         zedterm.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
@@ -72,7 +101,8 @@ impl ZedTerm {
 
     fn add_terminal_tab(&mut self, cx: &mut Context<Self>) {
         let settings = self.settings.clone();
-        let terminal = cx.new(move |cx| TerminalView::new(cx, &settings));
+        let cwd = self.new_tab_directory(cx);
+        let terminal = cx.new(move |cx| TerminalView::new(cx, &settings, cwd));
         cx.observe(&terminal, |_zedterm, _terminal, cx| {
             // Propagate terminal changes (e.g., title updates) to the tab bar.
             cx.notify();
@@ -88,10 +118,35 @@ impl ZedTerm {
             }
         })
         .detach();
+        cx.subscribe(&terminal, |zedterm, _, _: &TerminalBell, cx| {
+            zedterm.bell_pending = true;
+            cx.notify();
+        })
+        .detach();
         self.tabs.push(TabContent::Terminal(terminal));
         self.selected_index = self.tabs.len() - 1;
         self.focus_pending = true;
         cx.notify();
+    }
+
+    /// Where a new tab starts. The first tab (and the fallback) is zedterm's
+    /// own working directory, so launching it from a shell opens there.
+    fn new_tab_directory(&self, cx: &App) -> Option<std::path::PathBuf> {
+        match self.settings.new_tab_directory {
+            NewTabDirectory::Home => std::env::var_os("HOME").map(Into::into),
+            // The selected tab, or the last terminal tab when Settings is selected.
+            NewTabDirectory::Current => self
+                .tabs
+                .get(self.selected_index)
+                .into_iter()
+                .chain(self.tabs.iter().rev())
+                .find_map(|tab| match tab {
+                    TabContent::Terminal(term) => Some(term),
+                    TabContent::Settings(_) => None,
+                })
+                .and_then(|term| term.read(cx).current_dir()),
+        }
+        .filter(|_| !self.tabs.is_empty())
     }
 
     fn ensure_settings_tab(&mut self, cx: &mut Context<Self>) {
@@ -115,6 +170,7 @@ impl ZedTerm {
             {
                 apply_app_theme(&settings, cx);
             }
+            config::save_settings(&settings);
             zedterm.settings = settings;
             zedterm.settings_dirty = true;
             cx.notify();
@@ -188,6 +244,9 @@ impl ZedTerm {
 impl Render for ZedTerm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.apply_settings_to_terminals(window, cx);
+        if std::mem::take(&mut self.bell_pending) {
+            window.play_system_bell();
+        }
 
         if self.tabs.is_empty() {
             return v_flex().child("No tabs");
@@ -299,7 +358,11 @@ impl Render for ZedTerm {
                     .flex_1()
                     .w_full()
                     .h_full()
-                    .p_2()
+                    // Configurable padding for terminals; Settings keeps its layout.
+                    .p(px(match self.tabs[self.selected_index] {
+                        TabContent::Terminal(_) => self.settings.padding,
+                        TabContent::Settings(_) => 8.0,
+                    }))
                     .items_start()
                     .justify_start()
                     .overflow_hidden()
@@ -352,6 +415,22 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
     });
 }
 
+const WINDOW_STATE_SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+fn window_state_of(window: &Window) -> config::WindowState {
+    let (bounds, maximized) = match window.window_bounds() {
+        WindowBounds::Windowed(bounds) => (bounds, false),
+        WindowBounds::Maximized(bounds) => (bounds, true),
+        // Don't reopen in fullscreen; keep the restore size.
+        WindowBounds::Fullscreen(bounds) => (bounds, false),
+    };
+    config::WindowState {
+        width: bounds.size.width.into(),
+        height: bounds.size.height.into(),
+        maximized,
+    }
+}
+
 /// Blur what's behind the window when it is translucent (KDE/Wayland, macOS).
 fn background_appearance(settings: &AppSettings) -> WindowBackgroundAppearance {
     if settings.background_blur && settings.background_opacity < 1.0 {
@@ -367,8 +446,15 @@ fn main() {
     app.run(move |cx| {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
-        let settings = AppSettings::default();
+        let settings = config::load_settings();
+        let window_state = config::load_window_state();
         apply_app_theme(&settings, cx);
+
+        let restore_bounds = Bounds::centered(
+            None,
+            size(px(window_state.width), px(window_state.height)),
+            cx,
+        );
 
         let window_options = WindowOptions {
             // Setup GPUI to use custom title bar and client-side decorations for Wayland/X11.
@@ -379,13 +465,17 @@ fn main() {
             app_id: Some("zedterm".into()),
             window_decorations: Some(WindowDecorations::Client),
             window_background: background_appearance(&settings),
-            window_bounds: Some(WindowBounds::centered(size(px(800.), px(600.)), cx)),
+            window_bounds: Some(if window_state.maximized {
+                WindowBounds::Maximized(restore_bounds)
+            } else {
+                WindowBounds::Windowed(restore_bounds)
+            }),
             ..Default::default()
         };
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
-                let view = cx.new(|cx| ZedTerm::new(cx));
+                let view = cx.new(|cx| ZedTerm::new(settings, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             })?;
 

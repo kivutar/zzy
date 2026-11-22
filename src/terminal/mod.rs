@@ -4,7 +4,9 @@ mod pty;
 mod render;
 
 use crate::colors::Palette;
-use crate::settings::{AppSettings, CursorShapeSetting, ScrollbarVisibility};
+use crate::settings::{
+    AppSettings, BellMode, BoldText, CursorShapeSetting, ScrollbarVisibility, FONT_SIZE_RANGE,
+};
 use crate::theme::ThemeChoice;
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
@@ -20,7 +22,12 @@ use gpui_kit::{
 use parking_lot::Mutex;
 use portable_pty::{Child, MasterPty};
 pub use render::DEFAULT_FONT_SIZE;
-use std::{io::Write, path::Path, sync::Arc, time::Duration};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 pub struct TerminalView {
     focus_handle: FocusHandle,
@@ -31,12 +38,22 @@ pub struct TerminalView {
     _child: Option<Box<dyn Child + Send + Sync>>,
     rows: usize,
     cols: usize,
+    /// Effective font size: the setting plus this tab's zoom.
     font_size: f32,
+    /// Font size from the settings, before zoom.
+    base_font_size: f32,
+    /// Per-tab zoom offset in points (Ctrl+=/-/0, Ctrl+scroll); not saved.
+    zoom: f32,
     font_family: SharedString,
+    line_height: f32,
     cell_width: f32,
     cell_height: f32,
     scroll_handle: ScrollHandle,
     program_name: String,
+    /// Program and arguments to run in the PTY.
+    argv: Vec<String>,
+    /// Starting directory; `None` means zedterm's own working directory.
+    cwd: Option<PathBuf>,
     last_bounds: Option<Bounds<gpui_kit::Pixels>>,
     title: Option<String>,
     error: Option<String>,
@@ -54,7 +71,14 @@ pub struct TerminalView {
     /// Fractional wheel lines carried over between (trackpad) scroll events.
     scroll_lines_remainder: f32,
     cursor_blink_enabled: bool,
-    ignore_bold: bool,
+    bold_text: BoldText,
+    /// Padding around the view; the scrollbar thumb sits in this gutter.
+    padding: f32,
+    bell: BellMode,
+    ignore_program_title: bool,
+    last_bell: Option<Instant>,
+    /// The visual bell is shown until this instant.
+    flash_until: Option<Instant>,
     config: Config,
     scrollbar: ScrollbarVisibility,
     theme: ThemeChoice,
@@ -85,6 +109,15 @@ pub(crate) enum TerminalMsg {
 pub struct TerminalExited;
 
 impl EventEmitter<TerminalExited> for TerminalView {}
+
+/// Emitted when the bell should sound; the window plays it.
+pub struct TerminalBell;
+
+impl EventEmitter<TerminalBell> for TerminalView {}
+
+/// Bells closer together than this are dropped (e.g. `cat` on a binary file).
+const BELL_MIN_INTERVAL: Duration = Duration::from_millis(100);
+const BELL_FLASH_DURATION: Duration = Duration::from_millis(150);
 
 pub(crate) struct BufferSnapshot {
     segments_by_line: Vec<Vec<CellRender>>,
@@ -135,7 +168,7 @@ impl Dimensions for SimpleDimensions {
 }
 
 impl TerminalView {
-    pub fn new(cx: &mut Context<Self>, settings: &AppSettings) -> Self {
+    pub fn new(cx: &mut Context<Self>, settings: &AppSettings, cwd: Option<PathBuf>) -> Self {
         let focus_handle = cx.focus_handle();
         let (tx, rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx: tx.clone() };
@@ -148,10 +181,17 @@ impl TerminalView {
         let font_size: f32 = settings.font_size;
         let font_family = settings.font_family.clone();
         let scroll_handle = ScrollHandle::new();
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let program_name = Path::new(&shell)
-            .file_name()
-            .and_then(|n| n.to_str())
+        let (argv, error) = match pty::command_argv(settings) {
+            Ok(argv) => (argv, None),
+            Err(err) => (
+                pty::command_argv(&AppSettings::default()).unwrap_or_default(),
+                Some(err),
+            ),
+        };
+        let program_name = argv
+            .first()
+            .and_then(|program| Path::new(program).file_name())
+            .and_then(|name| name.to_str())
             .unwrap_or("shell")
             .to_string();
 
@@ -165,14 +205,19 @@ impl TerminalView {
             rows: render::DEFAULT_ROWS,
             cols: render::DEFAULT_COLS,
             font_size,
+            base_font_size: font_size,
+            zoom: 0.0,
             font_family,
+            line_height: settings.line_height,
             cell_width: render::DEFAULT_CELL_WIDTH,
             cell_height: render::DEFAULT_CELL_HEIGHT,
             scroll_handle,
             program_name,
+            argv,
+            cwd,
             last_bounds: None,
             title: None,
-            error: None,
+            error,
             keystroke_sub: None,
             cursor_visible: true,
             cell_metrics_measured: false,
@@ -185,7 +230,12 @@ impl TerminalView {
             last_mouse_cell: None,
             scroll_lines_remainder: 0.0,
             cursor_blink_enabled: settings.cursor_blink,
-            ignore_bold: settings.ignore_bold,
+            bold_text: settings.bold_text,
+            padding: settings.padding,
+            bell: settings.bell,
+            ignore_program_title: settings.ignore_program_title,
+            last_bell: None,
+            flash_until: None,
             config,
             scrollbar: settings.scrollbar,
             theme: settings.theme,
@@ -251,6 +301,7 @@ impl TerminalView {
                     self.write_bytes(seq.as_bytes());
                 }
             }
+            Event::Bell => self.ring_bell(cx),
             Event::Title(title) => {
                 self.title = Some(title);
             }
@@ -260,6 +311,35 @@ impl TerminalView {
             _ => {}
         }
         cx.notify();
+    }
+
+    fn ring_bell(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        if self.bell == BellMode::Off
+            || self
+                .last_bell
+                .is_some_and(|last| now.duration_since(last) < BELL_MIN_INTERVAL)
+        {
+            return;
+        }
+        self.last_bell = Some(now);
+
+        if self.bell.sound() {
+            cx.emit(TerminalBell);
+        }
+        if self.bell.flash() {
+            self.flash_until = Some(now + BELL_FLASH_DURATION);
+            cx.notify();
+            cx.spawn(async move |view, cx| {
+                cx.background_executor().timer(BELL_FLASH_DURATION).await;
+                view.update(cx, |_, cx| cx.notify()).ok();
+            })
+            .detach();
+        }
+    }
+
+    pub(crate) fn bell_flash_visible(&self) -> bool {
+        self.flash_until.is_some_and(|until| Instant::now() < until)
     }
 
     fn start_cursor_blink(&mut self, cx: &mut Context<Self>) {
@@ -335,7 +415,7 @@ impl TerminalView {
                     self.cell_width = measured_width;
                 }
                 if measured_height > 0.0 {
-                    self.cell_height = measured_height;
+                    self.cell_height = measured_height * self.line_height;
                 }
 
                 self.cell_metrics_measured = true;
@@ -408,13 +488,45 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// The shell's current directory (Linux: `/proc/<pid>/cwd`), used to
+    /// open new tabs in the same place.
+    pub fn current_dir(&self) -> Option<PathBuf> {
+        let pid = self._child.as_ref()?.process_id()?;
+        std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    }
+
     pub fn tab_title(&self) -> String {
         let program = self
             .title
             .as_deref()
-            .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty() && !self.ignore_program_title)
             .unwrap_or(&self.program_name);
         program.to_string()
+    }
+
+    /// Zoom this tab by `steps` points; 0 resets to the configured size.
+    pub(crate) fn zoom(&mut self, steps: f32, window: &mut Window, cx: &mut Context<Self>) {
+        let (min, max) = (FONT_SIZE_RANGE.0 as f32, FONT_SIZE_RANGE.1 as f32);
+        self.zoom = if steps == 0.0 {
+            0.0
+        } else {
+            // Keep the offset within what the font size can reach, so zooming
+            // back doesn't first have to "unwind" clamped steps.
+            (self.zoom + steps).clamp(min - self.base_font_size, max - self.base_font_size)
+        };
+        self.refresh_font(window, cx);
+    }
+
+    /// Re-measure cells after a font change and resize the PTY to match.
+    fn refresh_font(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (min, max) = (FONT_SIZE_RANGE.0 as f32, FONT_SIZE_RANGE.1 as f32);
+        self.font_size = (self.base_font_size + self.zoom).clamp(min, max);
+        self.cell_metrics_measured = false;
+        self.update_cell_metrics(window, cx);
+        if let Some(bounds) = self.last_bounds {
+            self.update_dimensions(bounds, cx);
+        }
+        cx.notify();
     }
 
     pub(crate) fn apply_settings(
@@ -423,14 +535,14 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.font_size != settings.font_size || self.font_family != settings.font_family {
-            self.font_size = settings.font_size;
+        if self.base_font_size != settings.font_size
+            || self.font_family != settings.font_family
+            || self.line_height != settings.line_height
+        {
+            self.base_font_size = settings.font_size;
             self.font_family = settings.font_family.clone();
-            self.cell_metrics_measured = false;
-            self.update_cell_metrics(window, cx);
-            if let Some(bounds) = self.last_bounds {
-                self.update_dimensions(bounds, cx);
-            }
+            self.line_height = settings.line_height;
+            self.refresh_font(window, cx);
         }
 
         self.cursor_blink_enabled = settings.cursor_blink;
@@ -448,7 +560,10 @@ impl TerminalView {
             self.config = config;
         }
 
-        self.ignore_bold = settings.ignore_bold;
+        self.bold_text = settings.bold_text;
+        self.padding = settings.padding;
+        self.bell = settings.bell;
+        self.ignore_program_title = settings.ignore_program_title;
         self.scrollbar = settings.scrollbar;
         self.theme = settings.theme;
         cx.notify();
@@ -488,6 +603,28 @@ mod tests {
             normalize_term_env(Some(OsString::from("alacritty"))),
             OsString::from("alacritty")
         );
+    }
+
+    #[test]
+    fn builds_command() {
+        let with = |command: &str, login_shell| AppSettings {
+            command: command.to_string().into(),
+            login_shell,
+            ..Default::default()
+        };
+        assert_eq!(
+            pty::command_argv(&with("tmux new -s 'my session'", false)).unwrap(),
+            vec!["tmux", "new", "-s", "my session"]
+        );
+        // Login applies to the default shell only.
+        assert_eq!(
+            pty::command_argv(&with("fish", true)).unwrap(),
+            vec!["fish"]
+        );
+        let shell = pty::command_argv(&with("  ", true)).unwrap();
+        assert_eq!(shell.len(), 2);
+        assert_eq!(shell[1], "-l");
+        assert!(pty::command_argv(&with("echo 'unterminated", false)).is_err());
     }
 
     #[test]

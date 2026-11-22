@@ -67,9 +67,21 @@ impl Palette {
         }
     }
 
-    pub(crate) fn fg_bg(&self, cell: &Cell) -> (Rgba, Rgba) {
+    /// "Bold is bright": the 8 base colors (and the foreground) switch to
+    /// their bright variant.
+    fn resolve_bright(&self, color: &ansi::Color) -> Rgba {
+        match color {
+            ansi::Color::Named(name) => self.resolve(&ansi::Color::Named(name.to_bright())),
+            ansi::Color::Indexed(idx) if *idx < 8 => self.resolve(&ansi::Color::Indexed(idx + 8)),
+            _ => self.resolve(color),
+        }
+    }
+
+    pub(crate) fn fg_bg(&self, cell: &Cell, bold_is_bright: bool) -> (Rgba, Rgba) {
         let mut fg = if cell.flags.contains(Flags::DIM) {
             self.resolve_dim(&cell.fg)
+        } else if bold_is_bright && cell.flags.contains(Flags::BOLD) {
+            self.resolve_bright(&cell.fg)
         } else {
             self.resolve(&cell.fg)
         };
@@ -321,4 +333,45 @@ pub(crate) fn theme_foreground(theme: crate::theme::ThemeChoice) -> Rgba {
 
 pub(crate) fn theme_border(theme: crate::theme::ThemeChoice) -> Rgba {
     rgba_hex(palette_for(theme).border)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::ThemeChoice;
+
+    fn cell(fg: ansi::Color, flags: Flags) -> Cell {
+        Cell {
+            fg,
+            flags,
+            ..Cell::default()
+        }
+    }
+
+    #[test]
+    fn bold_is_bright() {
+        let theme = palette_for(ThemeChoice::Dracula);
+        let palette = Palette::new(&Colors::default(), theme);
+        let red = ansi::Color::Named(ansi::NamedColor::Red);
+        let bright_red = rgba_hex(theme.indexed[9]);
+        let bold_red = cell(red, Flags::BOLD);
+
+        assert_eq!(palette.fg_bg(&bold_red, true).0, bright_red);
+        assert_eq!(
+            palette.fg_bg(&bold_red, false).0,
+            rgba_hex(theme.indexed[1])
+        );
+        assert_eq!(
+            palette
+                .fg_bg(&cell(ansi::Color::Indexed(1), Flags::BOLD), true)
+                .0,
+            bright_red
+        );
+        // 256-color and truecolor are left alone.
+        let orange = ansi::Color::Indexed(208);
+        assert_eq!(
+            palette.fg_bg(&cell(orange, Flags::BOLD), true).0,
+            palette.resolve(&orange)
+        );
+    }
 }
