@@ -68,8 +68,14 @@ pub struct TerminalView {
 }
 
 #[derive(Clone)]
+/// A run of same-styled cells, drawn at its own grid position so text can't
+/// drift off the cell grid (e.g. after a double-width character).
 struct CellRender {
     text: String,
+    /// First column of the run.
+    column: usize,
+    /// Number of grid cells the run covers (a wide character covers 2).
+    cells: usize,
     fg: Rgba,
     bg: Rgba,
     is_cursor: bool,

@@ -44,98 +44,64 @@ impl TerminalView {
         let total_lines = grid_ref.total_lines();
         let clamped_end = end_line.min(total_lines);
         let clamped_start = start_line.min(clamped_end);
-        let visible_lines = clamped_end.saturating_sub(clamped_start);
         let screen_lines = grid_ref.screen_lines();
         let history_size = total_lines.saturating_sub(screen_lines);
         let cols = grid_ref.columns();
         let mut cursor_position = None;
 
-        let mut grid = vec![
-            vec![
-                super::CellRender {
-                    text: " ".into(),
-                    fg: palette.default_fg,
-                    bg: palette.default_bg,
-                    is_cursor: false,
-                    is_bold: false,
-                };
-                cols
-            ];
-            visible_lines
-        ];
-
+        let mut segments = Vec::with_capacity(clamped_end - clamped_start);
         for line_idx in clamped_start..clamped_end {
-            let snapshot_idx = line_idx - clamped_start;
             let grid_line = Line(line_idx as i32 - history_size as i32);
+            let mut runs: Vec<super::CellRender> = Vec::new();
             for col_idx in 0..cols {
                 let cell = &grid_ref[grid_line][Column(col_idx)];
+                // The right half of a wide character: covered by that character's run.
                 if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                     continue;
                 }
-
-                let mut ch = String::new();
-                let mut cell_char = cell.c;
-                if cell_char == '\t' {
-                    cell_char = ' ';
-                }
-                ch.push(cell_char);
-                if let Some(extra) = cell.zerowidth() {
-                    for c in extra {
-                        ch.push(*c);
-                    }
-                }
-
+                let wide = cell.flags.contains(Flags::WIDE_CHAR);
                 let (fg, bg) = palette.fg_bg(cell, bold_is_bright);
                 let is_cursor = cursor.point.line == grid_line
                     && cursor.point.column == Column(col_idx)
                     && cursor.shape != ansi::CursorShape::Hidden;
                 let is_bold = cell.flags.contains(Flags::BOLD);
-                grid[snapshot_idx][col_idx] = super::CellRender {
-                    text: ch,
-                    fg,
-                    bg,
-                    is_cursor,
-                    is_bold,
-                };
                 if is_cursor {
                     cursor_position = Some(super::CellPosition {
                         line: line_idx,
                         column: col_idx,
                     });
                 }
+
+                // Extend the current run when the style matches; wide characters
+                // always get a run of their own, exactly two cells wide.
+                let extends = runs.last().is_some_and(|run| {
+                    !wide
+                        && run.cells == run.text.chars().count()
+                        && run.fg == fg
+                        && run.bg == bg
+                        && run.is_cursor == is_cursor
+                        && run.is_bold == is_bold
+                });
+                if !extends {
+                    runs.push(super::CellRender {
+                        text: String::new(),
+                        column: col_idx,
+                        cells: 0,
+                        fg,
+                        bg,
+                        is_cursor,
+                        is_bold,
+                    });
+                }
+                let run = runs.last_mut().expect("a run was just ensured");
+                run.text.push(if cell.c == '\t' { ' ' } else { cell.c });
+                if let Some(extra) = cell.zerowidth() {
+                    run.text.extend(extra.iter());
+                }
+                run.cells += if wide { 2 } else { 1 };
             }
+            segments.push(runs);
         }
-
-        let segments = grid
-            .into_iter()
-            .map(|row| {
-                let mut segments = Vec::new();
-                let mut current: Option<super::CellRender> = None;
-
-                for cell in row {
-                    if let Some(seg) = &mut current {
-                        if seg.fg == cell.fg
-                            && seg.bg == cell.bg
-                            && seg.is_cursor == cell.is_cursor
-                            && seg.is_bold == cell.is_bold
-                        {
-                            seg.text.push_str(&cell.text);
-                        } else {
-                            segments.push(seg.clone());
-                            current = Some(cell);
-                        }
-                    } else {
-                        current = Some(cell);
-                    }
-                }
-
-                if let Some(seg) = current {
-                    segments.push(seg);
-                }
-
-                segments
-            })
-            .collect();
 
         BufferSnapshot {
             segments_by_line: segments,
@@ -190,7 +156,12 @@ impl Render for TerminalView {
 
         for (idx, segments) in buffer.segments_by_line.into_iter().enumerate() {
             let line = buffer.start_line + idx;
-            let mut line_row = div().id(("line", line as u32)).relative().w_full();
+            // Runs are absolutely positioned, so the row gets its height explicitly.
+            let mut line_row = div()
+                .id(("line", line as u32))
+                .relative()
+                .w_full()
+                .h(px(cell_height));
 
             // Painted first so it sits behind the text. Cells using the default
             // background don't paint one (the container already does), so the
@@ -216,20 +187,27 @@ impl Render for TerminalView {
                 );
             }
 
-            line_row = line_row.child(h_flex().children(segments.into_iter().map(|seg| {
+            // Each run is placed at its column with its exact width, so the text
+            // stays on the cell grid that selection, cursor and mouse use.
+            line_row = line_row.children(segments.into_iter().map(|seg| {
                 let (fg, bg) = if seg.is_cursor && block_cursor && self.cursor_visible {
                     (palette.cursor_color(), palette.cursor_bg())
                 } else {
                     (seg.fg, seg.bg)
                 };
                 div()
+                    .absolute()
+                    .top_0()
+                    .left(px(seg.column as f32 * self.cell_width))
+                    .w(px(seg.cells as f32 * self.cell_width))
+                    .h(px(cell_height))
                     .when(seg.is_bold && self.settings.bold_text.bold_font(), |this| {
                         this.font_weight(FontWeight::BOLD)
                     })
                     .text_color(fg)
                     .when(bg != palette.default_bg, |this| this.bg(bg))
                     .child(seg.text)
-            })));
+            }));
 
             // Thin cursors are drawn on top of the glyphs.
             if let Some(pos) = cursor_position.filter(|pos| pos.line == line) {
@@ -437,6 +415,31 @@ mod tests {
         assert!(!prefix.contains('\t'));
         assert!(prefix.chars().all(|c| c == ' '));
         assert_eq!(prefix.len(), 8);
+    }
+
+    #[test]
+    fn wide_characters_keep_following_text_on_the_grid() {
+        let (tx, _rx) = mpsc::unbounded();
+        let mut term = Term::new(
+            Config::default(),
+            &SimpleDimensions::new(16, DEFAULT_ROWS),
+            TerminalEventProxy { tx },
+        );
+        let mut parser: ansi::Processor = ansi::Processor::new();
+        parser.advance(&mut term, "月 bar".as_bytes());
+
+        let snapshot =
+            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark, false, 0, 1);
+        let runs: Vec<(usize, usize, &str)> = snapshot.segments_by_line[0]
+            .iter()
+            .map(|run| (run.column, run.cells, run.text.as_str()))
+            .take(2)
+            .collect();
+        // The wide character covers columns 0-1 on its own; no stray space for
+        // its spacer cell, so "bar" starts at column 3 like in the grid.
+        assert_eq!(runs[0], (0, 2, "月"));
+        assert_eq!(runs[1].0, 2);
+        assert!(runs[1].2.starts_with(" bar"), "{:?}", runs[1].2);
     }
 
     #[test]
