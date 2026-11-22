@@ -1,3 +1,4 @@
+mod context;
 mod input;
 mod mouse;
 mod pty;
@@ -14,6 +15,7 @@ use alacritty_terminal::{
     term::{Config, Term},
     vte::ansi,
 };
+pub use context::ProcessContext;
 use futures::channel::mpsc;
 use gpui_kit::{
     font, px, Bounds, Context, EventEmitter, FocusHandle, Focusable, Hsla, Rgba, ScrollHandle,
@@ -76,6 +78,8 @@ pub struct TerminalView {
     padding: f32,
     bell: BellMode,
     ignore_program_title: bool,
+    /// Root / SSH state of the foreground program, polled (see `context.rs`).
+    process_context: ProcessContext,
     last_bell: Option<Instant>,
     /// The visual bell is shown until this instant.
     flash_until: Option<Instant>,
@@ -234,6 +238,7 @@ impl TerminalView {
             padding: settings.padding,
             bell: settings.bell,
             ignore_program_title: settings.ignore_program_title,
+            process_context: ProcessContext::Normal,
             last_bell: None,
             flash_until: None,
             config,
@@ -246,6 +251,7 @@ impl TerminalView {
         view.start_pty(tx, cx);
         view.start_cursor_blink(cx);
         view.start_scroll_invalidation(cx);
+        view.start_context_polling(cx);
         view
     }
 

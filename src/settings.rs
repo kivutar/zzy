@@ -41,6 +41,10 @@ pub struct AppSettings {
     pub bell: BellMode,
     /// Show the program name in tabs instead of titles set by programs.
     pub ignore_program_title: bool,
+    /// Tint the window background red while the program runs as root.
+    pub tint_root: bool,
+    /// Tint the window background green during SSH sessions.
+    pub tint_ssh: bool,
 }
 
 impl Default for AppSettings {
@@ -63,6 +67,8 @@ impl Default for AppSettings {
             line_height: 1.0,
             bell: BellMode::Sound,
             ignore_program_title: false,
+            tint_root: true,
+            tint_ssh: true,
         }
     }
 }
@@ -369,6 +375,14 @@ impl Render for SettingsView {
             );
             SettingField::switch(read, write).default_value(defaults.ignore_program_title)
         };
+        let tint_root = {
+            let (read, write) = bind(&view, |s| s.tint_root, |s, v| s.tint_root = v);
+            SettingField::switch(read, write).default_value(defaults.tint_root)
+        };
+        let tint_ssh = {
+            let (read, write) = bind(&view, |s| s.tint_ssh, |s, v| s.tint_ssh = v);
+            SettingField::switch(read, write).default_value(defaults.tint_ssh)
+        };
         let command = {
             let (read, write) = bind(&view, |s| s.command.clone(), |s, v| s.command = v);
             SettingField::input(read, write).default_value(defaults.command.clone())
@@ -456,6 +470,8 @@ impl Render for SettingsView {
                             dropdown(&view, BELL_MODES, |s| s.bell, |s, v| s.bell = v),
                         ),
                         SettingItem::new("Ignore Program Titles", ignore_title),
+                        SettingItem::new("Red Tint for Root", tint_root),
+                        SettingItem::new("Green Tint for SSH", tint_ssh),
                     ]))]),
         )
     }

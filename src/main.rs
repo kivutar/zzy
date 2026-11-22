@@ -11,9 +11,10 @@ use gpui_kit::component::{
     tab::{Tab, TabBar},
     v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use settings::{AppSettings, NewTabDirectory, SettingsView};
-use terminal::{TerminalBell, TerminalExited, TerminalView};
+use terminal::{ProcessContext, TerminalBell, TerminalExited, TerminalView};
 
 pub struct ZedTerm {
     tabs: Vec<TabContent>,
@@ -258,8 +259,20 @@ impl Render for ZedTerm {
         }
 
         let view = cx.entity();
-        v_flex()
-            .size_full()
+        let context_color = |tab: &TabContent, cx: &App| match tab {
+            TabContent::Terminal(term) => match term.read(cx).process_context() {
+                ProcessContext::Root if self.settings.tint_root => ProcessContext::Root.color(),
+                ProcessContext::Remote if self.settings.tint_ssh => ProcessContext::Remote.color(),
+                _ => None,
+            },
+            TabContent::Settings(_) => None,
+        };
+        // Tint the window background for the selected tab while it runs as root
+        // (red) or over SSH (green). Painted under all content, on top of Root's
+        // background; default-colored terminal cells don't paint, so it shows through.
+        let window_tint = context_color(&self.tabs[self.selected_index], cx);
+        let header = v_flex()
+            .w_full()
             .child(
                 // Render custom title bar on top of Root view.
                 // The window background (painted once by Root) shows through
@@ -329,8 +342,13 @@ impl Render for ZedTerm {
                                 ("Settings".to_string(), IconName::Settings2)
                             }
                         };
+                        // Background tabs keep their own context color on the icon.
+                        let icon = Icon::new(icon)
+                            .when_some(context_color(tab, cx), |icon, color| {
+                                icon.text_color(color)
+                            });
                         Tab::new()
-                            .prefix(Icon::new(icon))
+                            .prefix(icon)
                             .label(label)
                             .px_2()
                             .cursor(CursorStyle::PointingHand)
@@ -351,18 +369,24 @@ impl Render for ZedTerm {
                                     }),
                             )
                     })),
-            )
+            );
+
+        v_flex()
+            .size_full()
+            .when_some(window_tint, |this, color| this.bg(color.opacity(0.1)))
+            .child(header)
             .child(
                 v_flex()
                     .id("window-body")
                     .flex_1()
                     .w_full()
                     .h_full()
-                    // Configurable padding for terminals; Settings keeps its layout.
-                    .p(px(match self.tabs[self.selected_index] {
-                        TabContent::Terminal(_) => self.settings.padding,
-                        TabContent::Settings(_) => 8.0,
-                    }))
+                    // Configurable padding for terminals; the Settings page is
+                    // laid out edge to edge (as it was before padding existed).
+                    .when(
+                        matches!(self.tabs[self.selected_index], TabContent::Terminal(_)),
+                        |this| this.p(px(self.settings.padding)),
+                    )
                     .items_start()
                     .justify_start()
                     .overflow_hidden()
