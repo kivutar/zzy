@@ -48,6 +48,8 @@ pub struct AppSettings {
     pub tint_ssh: bool,
     /// Language of the interface.
     pub language: Language,
+    /// Show the tabs in the title bar instead of a bar of their own.
+    pub tabs_in_title_bar: bool,
 }
 
 impl Default for AppSettings {
@@ -73,6 +75,7 @@ impl Default for AppSettings {
             ignore_program_title: false,
             tint_root: true,
             tint_ssh: true,
+            tabs_in_title_bar: false,
         }
     }
 }
@@ -439,6 +442,11 @@ impl Render for SettingsView {
         );
         let tint_root = switch(&view, |s| s.tint_root, |s, v| s.tint_root = v);
         let tint_ssh = switch(&view, |s| s.tint_ssh, |s, v| s.tint_ssh = v);
+        let tabs_in_title_bar = switch(
+            &view,
+            |s| s.tabs_in_title_bar,
+            |s, v| s.tabs_in_title_bar = v,
+        );
         let command = text(&view, |s| s.command.clone(), |s, v| s.command = v);
         let login_shell = switch(&view, |s| s.login_shell, |s, v| s.login_shell = v);
         let scrollback = number(
@@ -488,6 +496,10 @@ impl Render for SettingsView {
                             .items(vec![
                                 SettingItem::new(tr("settings.padding"), padding),
                                 SettingItem::new(tr("settings.line_height"), line_height),
+                                SettingItem::new(
+                                    tr("settings.tabs_in_title_bar"),
+                                    tabs_in_title_bar,
+                                ),
                             ]),
                     )
                     .group(

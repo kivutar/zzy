@@ -25,8 +25,11 @@ use std::{cell::Cell, rc::Rc};
 
 /// gpui-kit's default `TabVariant::Tab` height and our horizontal tab padding,
 /// used to place the separators and the line's gap on the tab edges.
-const TAB_HEIGHT: f32 = 32.0;
+pub(crate) const TAB_HEIGHT: f32 = 32.0;
 const TAB_PADDING_X: f32 = 8.0;
+
+/// Left and right edges for the line under the tabs, recorded during prepaint.
+pub(crate) type LineExtent = Rc<Cell<Option<(Pixels, Pixels)>>>;
 
 /// The payload of a tab being dragged to a new position.
 #[derive(Clone)]
@@ -72,7 +75,15 @@ impl Zzy {
         }
     }
 
-    pub(crate) fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The tab bar. In the title bar (`line_extent` set), the line under the
+    /// tabs spans the whole title bar, whose edges are recorded there during
+    /// prepaint, and tabs keep their presses from moving the window.
+    pub(crate) fn render_tab_bar(
+        &self,
+        line_extent: Option<LineExtent>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let in_title_bar = line_extent.is_some();
         let view = cx.entity();
         let border_color = cx.theme().border;
         let drop_target = border_color.opacity(0.5);
@@ -101,6 +112,9 @@ impl Zzy {
                         .on_click({
                             let view = view.clone();
                             move |selected_index, window, cx| {
+                                // In the title bar, a double click on a tab must
+                                // not reach the bar (which maximizes the window).
+                                cx.stop_propagation();
                                 let view = view.clone();
                                 view.update(cx, |zzy, cx| {
                                     zzy.select_tab(*selected_index, cx);
@@ -200,6 +214,14 @@ impl Zzy {
                                 .label(label)
                                 .px(px(TAB_PADDING_X))
                                 .cursor(CursorStyle::PointingHand)
+                                // The title bar moves the window on a press and drag
+                                // unless the press was claimed, as buttons do; a tab
+                                // claims it so dragging reorders tabs instead.
+                                .when(in_title_bar, |this| {
+                                    this.on_mouse_down(MouseButton::Left, |_, window, _| {
+                                        window.prevent_default()
+                                    })
+                                })
                                 // Drag to reorder: the dropped tab takes this tab's place.
                                 .on_drag(dragged, |dragged, _, _, cx| {
                                     cx.new(|_| TabDragPreview(dragged.clone()))
@@ -246,7 +268,10 @@ impl Zzy {
                 canvas(
                     |_, _, _| {},
                     move |bounds, _, window, _| {
-                        let (left, right) = (bounds.left(), bounds.right());
+                        let (left, right) = line_extent
+                            .as_ref()
+                            .and_then(|extent| extent.get())
+                            .unwrap_or((bounds.left(), bounds.right()));
                         let segments = match (active_left.get(), active_right.get()) {
                             // Each segment also covers the active tab's 1px side
                             // border column, closing the corner where they meet.

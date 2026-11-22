@@ -269,59 +269,103 @@ impl Render for Zzy {
         // (red) or over SSH (green). Painted under all content, on top of Root's
         // background; default-colored terminal cells don't paint, so it shows through.
         let window_tint = self.context_color(&self.tabs[self.selected_index], cx);
-        let header = v_flex()
-            .w_full()
+        // Settings and fullscreen buttons, at the end of the title bar.
+        let title_buttons = h_flex()
+            .gap_1()
             .child(
-                // Render custom title bar on top of Root view.
-                // The window background (painted once by Root) shows through
-                // the title bar, tabs and terminal so translucency is uniform.
-                TitleBar::new().bg(transparent_black()).child(
-                    h_flex()
-                        .w_full()
-                        .pr_2()
-                        .justify_between()
-                        .child("zzy")
+                Button::new("open-settings")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Settings2)
+                    .tooltip(i18n::tr("tab.settings"))
+                    .cursor(CursorStyle::PointingHand)
+                    .on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            view.update(cx, |zzy, cx| {
+                                zzy.ensure_settings_tab(window, cx);
+                                zzy.focus_selected(window, cx);
+                            });
+                        }
+                    }),
+            )
+            .child(
+                Button::new("toggle-fullscreen")
+                    .ghost()
+                    .xsmall()
+                    .icon(if window.is_fullscreen() {
+                        IconName::Minimize
+                    } else {
+                        IconName::Maximize
+                    })
+                    .tooltip(if window.is_fullscreen() {
+                        i18n::tr("window.exit_fullscreen")
+                    } else {
+                        i18n::tr("window.fullscreen")
+                    })
+                    .cursor(CursorStyle::PointingHand)
+                    .on_click(|_, window, _| window.toggle_fullscreen()),
+            );
+        // Render custom title bar on top of Root view.
+        // The window background (painted once by Root) shows through
+        // the title bar, tabs and terminal so translucency is uniform.
+        let title_bar = TitleBar::new().bg(transparent_black());
+        let header = if self.settings.tabs_in_title_bar {
+            // The tabs' own line (with its gap under the active tab) replaces the
+            // title bar's border, spanning the whole bar: its edges are recorded
+            // here during prepaint, before the line paints.
+            let extent = tab_bar::LineExtent::default();
+            let record = extent.clone();
+            v_flex()
+                .w_full()
+                .child(
+                    canvas(
+                        move |bounds, _, _| record.set(Some((bounds.left(), bounds.right()))),
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+                .child(
+                    title_bar
+                        .border_b(px(0.))
+                        // As tall as the tabs, whose borders then reach the top
+                        // edge, and no start padding: the first tab sits at the
+                        // window edge as in the tab bar of its own.
+                        .h(px(tab_bar::TAB_HEIGHT))
+                        .pl_0()
                         .child(
                             h_flex()
-                                .gap_1()
+                                .size_full()
+                                .pr_2()
+                                .gap_2()
+                                // Tabs sit on the bar's bottom edge, like a tab bar.
                                 .child(
-                                    Button::new("open-settings")
-                                        .ghost()
-                                        .xsmall()
-                                        .icon(IconName::Settings2)
-                                        .tooltip(i18n::tr("tab.settings"))
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_click({
-                                            let view = view.clone();
-                                            move |_, window, cx| {
-                                                view.update(cx, |zzy, cx| {
-                                                    zzy.ensure_settings_tab(window, cx);
-                                                    zzy.focus_selected(window, cx);
-                                                });
-                                            }
-                                        }),
+                                    v_flex()
+                                        .h_full()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .justify_end()
+                                        .child(self.render_tab_bar(Some(extent), cx)),
                                 )
-                                .child(
-                                    Button::new("toggle-fullscreen")
-                                        .ghost()
-                                        .xsmall()
-                                        .icon(if window.is_fullscreen() {
-                                            IconName::Minimize
-                                        } else {
-                                            IconName::Maximize
-                                        })
-                                        .tooltip(if window.is_fullscreen() {
-                                            i18n::tr("window.exit_fullscreen")
-                                        } else {
-                                            i18n::tr("window.fullscreen")
-                                        })
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_click(|_, window, _| window.toggle_fullscreen()),
-                                ),
+                                .child(title_buttons),
                         ),
-                ),
-            )
-            .child(self.render_tab_bar(cx));
+                )
+        } else {
+            v_flex()
+                .w_full()
+                .child(
+                    title_bar.child(
+                        h_flex()
+                            .w_full()
+                            .pr_2()
+                            .justify_between()
+                            .child("zzy")
+                            .child(title_buttons),
+                    ),
+                )
+                .child(self.render_tab_bar(None, cx))
+        };
 
         v_flex()
             .size_full()

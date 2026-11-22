@@ -37,6 +37,9 @@ settings.padding:
 settings.line_height:
   en: Line Height
   ja: 行の高さ
+settings.tabs_in_title_bar:
+  en: Tabs in Title Bar
+  ja: タブをタイトルバーに表示
 settings.group.cursor:
   en: Cursor
   ja: カーソル
