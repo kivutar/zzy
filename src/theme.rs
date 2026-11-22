@@ -15,6 +15,8 @@ pub enum ThemeChoice {
     GruvboxLight,
     HamiMelonLight,
     AyuLight,
+    CatppuccinMocha,
+    CatppuccinLatte,
 }
 
 impl ThemeChoice {
@@ -26,6 +28,7 @@ impl ThemeChoice {
                 | Self::GruvboxDark
                 | Self::HamiMelonDark
                 | Self::AyuDark
+                | Self::CatppuccinMocha
         )
     }
 }

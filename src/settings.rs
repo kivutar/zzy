@@ -266,6 +266,11 @@ const DARK_THEMES: Choices<ThemeChoice> = &[
         Label::Name("Hami Melon Dark"),
     ),
     (ThemeChoice::AyuDark, "ayu-dark", Label::Name("Ayu Dark")),
+    (
+        ThemeChoice::CatppuccinMocha,
+        "catppuccin-mocha",
+        Label::Name("Catppuccin Mocha"),
+    ),
 ];
 
 const LIGHT_THEMES: Choices<ThemeChoice> = &[
@@ -286,6 +291,11 @@ const LIGHT_THEMES: Choices<ThemeChoice> = &[
         Label::Name("Hami Melon Light"),
     ),
     (ThemeChoice::AyuLight, "ayu-light", Label::Name("Ayu Light")),
+    (
+        ThemeChoice::CatppuccinLatte,
+        "catppuccin-latte",
+        Label::Name("Catppuccin Latte"),
+    ),
 ];
 
 const APPEARANCES: Choices<Appearance> = &[

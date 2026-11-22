@@ -543,6 +543,45 @@ const HAMI_MELON_LIGHT: ThemeOverrides = ThemeOverrides {
     border: 0xdfdfe0ff,
 };
 
+// Catppuccin's official dark (Mocha) and light (Latte) flavors, from
+// catppuccin/alacritty; borders use each flavor's Surface 0.
+
+const CATPPUCCIN_MOCHA: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0x45475aff, 0xf38ba8ff, 0xa6e3a1ff, 0xf9e2afff, 0x89b4faff, 0xf5c2e7ff, 0x94e2d5ff,
+        0xa6adc8ff, 0x585b70ff, 0xf37799ff, 0x89d88bff, 0xebd391ff, 0x74a8fcff, 0xf2aedeff,
+        0x6bd7caff, 0xbac2deff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0xcdd6f4ff),
+        (ansi::NamedColor::BrightForeground, 0xcdd6f4ff),
+        (ansi::NamedColor::DimForeground, 0x7f849cff),
+        (ansi::NamedColor::Background, 0x1e1e2eff),
+        (ansi::NamedColor::Cursor, 0xf5e0dcff),
+    ],
+    default_fg: 0xcdd6f4ff,
+    default_bg: 0x1e1e2eff,
+    border: 0x313244ff,
+};
+
+const CATPPUCCIN_LATTE: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0x5c5f77ff, 0xd20f39ff, 0x40a02bff, 0xdf8e1dff, 0x1e66f5ff, 0xea76cbff, 0x179299ff,
+        0xacb0beff, 0x6c6f85ff, 0xde293eff, 0x49af3dff, 0xeea02dff, 0x456effff, 0xfe85d8ff,
+        0x2d9fa8ff, 0xbcc0ccff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0x4c4f69ff),
+        (ansi::NamedColor::BrightForeground, 0x4c4f69ff),
+        (ansi::NamedColor::DimForeground, 0x8c8fa1ff),
+        (ansi::NamedColor::Background, 0xeff1f5ff),
+        (ansi::NamedColor::Cursor, 0xdc8a78ff),
+    ],
+    default_fg: 0x4c4f69ff,
+    default_bg: 0xeff1f5ff,
+    border: 0xccd0daff,
+};
+
 pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOverrides {
     use crate::theme::ThemeChoice::*;
     match theme {
@@ -556,6 +595,8 @@ pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOve
         GruvboxLight => &GRUVBOX_LIGHT,
         AyuLight => &AYU_LIGHT,
         HamiMelonLight => &HAMI_MELON_LIGHT,
+        CatppuccinMocha => &CATPPUCCIN_MOCHA,
+        CatppuccinLatte => &CATPPUCCIN_LATTE,
     }
 }
 
