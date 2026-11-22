@@ -197,6 +197,18 @@ impl ZedTerm {
         cx.notify();
     }
 
+    /// Move the tab at `from` to position `to` (drag to reorder). The selected
+    /// tab stays selected wherever it ends up.
+    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.selected_index = moved_index(self.selected_index, from, to);
+        cx.notify();
+    }
+
     fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.tabs.len() {
             self.selected_index = index;
@@ -313,6 +325,19 @@ impl Render for ZedTerm {
     }
 }
 
+/// Where the tab at `index` ends up after the tab at `from` moves to `to`.
+fn moved_index(index: usize, from: usize, to: usize) -> usize {
+    if index == from {
+        to
+    } else if from < index && index <= to {
+        index - 1
+    } else if to <= index && index < from {
+        index + 1
+    } else {
+        index
+    }
+}
+
 /// Override the component theme with the terminal palette.
 ///
 /// Must go through `Theme::update` so the render tokens (e.g. `tokens.tab_active`)
@@ -341,7 +366,9 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
         theme.tab_active = clear;
         theme.foreground = fg;
         theme.secondary_foreground = fg;
-        theme.tab_foreground = fg;
+        // Inactive tabs are dimmed; the active (and hovered) tab uses full text color.
+        theme.tab_foreground = fg.opacity(0.6);
+        theme.tab_active_foreground = fg;
         theme.sidebar_foreground = fg;
         theme.sidebar_accent_foreground = fg;
         theme.sidebar_accent = border.opacity(opacity);
@@ -424,4 +451,27 @@ fn main() {
         })
         .detach();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::moved_index;
+
+    /// Simulates the move on a list and checks `moved_index` against it.
+    #[test]
+    fn moved_index_follows_every_tab() {
+        for len in 1..6 {
+            for from in 0..len {
+                for to in 0..len {
+                    let mut tabs: Vec<usize> = (0..len).collect();
+                    let tab = tabs.remove(from);
+                    tabs.insert(to, tab);
+                    for index in 0..len {
+                        let new_index = tabs.iter().position(|&t| t == index).unwrap();
+                        assert_eq!(moved_index(index, from, to), new_index, "{from}->{to}");
+                    }
+                }
+            }
+        }
+    }
 }

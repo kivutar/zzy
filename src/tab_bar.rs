@@ -25,6 +25,35 @@ use std::{cell::Cell, rc::Rc};
 const TAB_HEIGHT: f32 = 32.0;
 const TAB_PADDING_X: f32 = 8.0;
 
+/// The payload of a tab being dragged to a new position.
+#[derive(Clone)]
+struct DraggedTab {
+    index: usize,
+    label: SharedString,
+    icon: IconName,
+}
+
+/// What follows the cursor while a tab is dragged.
+struct TabDragPreview(DraggedTab);
+
+impl Render for TabDragPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .text_color(cx.theme().popover_foreground)
+            .text_sm()
+            .shadow_md()
+            .child(Icon::new(self.0.icon.clone()))
+            .child(self.0.label.clone())
+    }
+}
+
 impl ZedTerm {
     /// Red while the tab's program runs as root, green during SSH (when the
     /// respective setting is on); `None` otherwise.
@@ -43,6 +72,7 @@ impl ZedTerm {
     pub(crate) fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let border_color = cx.theme().border;
+        let drop_target = border_color.opacity(0.5);
         // Outer edges of the active tab, recorded during prepaint and read when
         // the line under the bar paints later in the same frame.
         let active_left: Rc<Cell<Option<Pixels>>> = Rc::default();
@@ -90,7 +120,7 @@ impl ZedTerm {
                         })
                         .children(self.tabs.iter().enumerate().map(|(index, tab)| {
                             let close_view = view.clone();
-                            let (label, icon) = match tab {
+                            let (label, tab_icon) = match tab {
                                 TabContent::Terminal(term) => {
                                     (term.read(cx).tab_title(), IconName::SquareTerminal)
                                 }
@@ -99,7 +129,7 @@ impl ZedTerm {
                                 }
                             };
                             // Background tabs keep their own context color on the icon.
-                            let icon = Icon::new(icon)
+                            let icon = Icon::new(tab_icon.clone())
                                 .when_some(context_color(tab, cx), |icon, color| {
                                     icon.text_color(color)
                                 });
@@ -152,11 +182,36 @@ impl ZedTerm {
                                         zedterm.focus_selected(window, cx);
                                     });
                                 });
+                            let dragged = DraggedTab {
+                                index,
+                                label: label.clone().into(),
+                                icon: tab_icon,
+                            };
                             Tab::new()
                                 .prefix(icon)
                                 .label(label)
                                 .px(px(TAB_PADDING_X))
                                 .cursor(CursorStyle::PointingHand)
+                                // Drag to reorder: the dropped tab takes this tab's place.
+                                .on_drag(dragged, |dragged, _, _, cx| {
+                                    cx.new(|_| TabDragPreview(dragged.clone()))
+                                })
+                                .drag_over::<DraggedTab>(move |style, dragged, _, _| {
+                                    if dragged.index == index {
+                                        style
+                                    } else {
+                                        style.bg(drop_target)
+                                    }
+                                })
+                                .on_drop({
+                                    let view = view.clone();
+                                    move |dragged: &DraggedTab, window, cx| {
+                                        view.update(cx, |zedterm, cx| {
+                                            zedterm.move_tab(dragged.index, index, cx);
+                                            zedterm.focus_selected(window, cx);
+                                        });
+                                    }
+                                })
                                 .suffix(
                                     h_flex()
                                         .h(px(TAB_HEIGHT))
