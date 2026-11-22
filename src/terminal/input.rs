@@ -5,8 +5,8 @@ use alacritty_terminal::{
     term::{cell::Flags, Term, TermMode},
 };
 use gpui_kit::{
-    ClipboardItem, Context, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Window,
+    ClipboardItem, Context, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Window,
 };
 
 impl TerminalView {
@@ -473,6 +473,10 @@ fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
 
 fn keystroke_to_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
     let mods = &keystroke.modifiers;
+    if let Some(bytes) = special_key_bytes(&keystroke.key, modifier_param(mods), app_cursor) {
+        return Some(bytes);
+    }
+
     let mut bytes = if let Some(text) = keystroke.key_char.as_ref().filter(|_| !mods.control) {
         text.clone().into_bytes()
     } else if mods.control && keystroke.key.len() == 1 {
@@ -486,27 +490,15 @@ fn keystroke_to_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>
     } else if mods.alt && keystroke.key.chars().count() == 1 {
         keystroke.key.clone().into_bytes()
     } else {
-        // SS3 in application cursor mode (vim, less, htop...), CSI otherwise.
-        let cursor = |c: u8| {
-            let prefix: &[u8] = if app_cursor { b"\x1bO" } else { b"\x1b[" };
-            [prefix, &[c]].concat()
-        };
         match keystroke.key.as_str() {
             "enter" => b"\r".to_vec(),
             "tab" => b"\t".to_vec(),
             "space" if mods.control => vec![0],
             "space" => b" ".to_vec(),
+            // ^H: delete the previous word in many shells and editors.
+            "backspace" if mods.control => vec![0x08],
             "backspace" => vec![0x7f],
             "escape" => vec![0x1b],
-            "up" => cursor(b'A'),
-            "down" => cursor(b'B'),
-            "right" => cursor(b'C'),
-            "left" => cursor(b'D'),
-            "home" => cursor(b'H'),
-            "end" => cursor(b'F'),
-            "pageup" => b"\x1b[5~".to_vec(),
-            "pagedown" => b"\x1b[6~".to_vec(),
-            "delete" => b"\x1b[3~".to_vec(),
             _ => return None,
         }
     };
@@ -515,6 +507,52 @@ fn keystroke_to_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>
         bytes.insert(0, 0x1b);
     }
     Some(bytes)
+}
+
+/// xterm modifier parameter: 1 + Shift(1) + Alt(2) + Ctrl(4).
+fn modifier_param(mods: &Modifiers) -> u8 {
+    1 + mods.shift as u8 + 2 * mods.alt as u8 + 4 * mods.control as u8
+}
+
+/// Cursor, editing and function keys, in xterm's encoding. Unmodified cursor
+/// keys honor application cursor mode (SS3); modified keys carry the modifier
+/// parameter (`CSI 1;<mod>A`, `CSI 15;<mod>~`).
+fn special_key_bytes(key: &str, modifier: u8, app_cursor: bool) -> Option<Vec<u8>> {
+    let letter = |c: char, ss3: bool| match modifier {
+        1 if ss3 => format!("\x1bO{c}"),
+        1 => format!("\x1b[{c}"),
+        _ => format!("\x1b[1;{modifier}{c}"),
+    };
+    let tilde = |code: u8| match modifier {
+        1 => format!("\x1b[{code}~"),
+        _ => format!("\x1b[{code};{modifier}~"),
+    };
+    let sequence = match key {
+        "up" => letter('A', app_cursor),
+        "down" => letter('B', app_cursor),
+        "right" => letter('C', app_cursor),
+        "left" => letter('D', app_cursor),
+        "home" => letter('H', app_cursor),
+        "end" => letter('F', app_cursor),
+        "f1" => letter('P', true),
+        "f2" => letter('Q', true),
+        "f3" => letter('R', true),
+        "f4" => letter('S', true),
+        "f5" => tilde(15),
+        "f6" => tilde(17),
+        "f7" => tilde(18),
+        "f8" => tilde(19),
+        "f9" => tilde(20),
+        "f10" => tilde(21),
+        "f11" => tilde(23),
+        "f12" => tilde(24),
+        "insert" => tilde(2),
+        "delete" => tilde(3),
+        "pageup" => tilde(5),
+        "pagedown" => tilde(6),
+        _ => return None,
+    };
+    Some(sequence.into_bytes())
 }
 
 #[cfg(test)]
@@ -600,5 +638,24 @@ mod tests {
         assert_eq!(bytes("up", false), Some(b"\x1b[A".to_vec()));
         assert_eq!(bytes("up", true), Some(b"\x1bOA".to_vec()));
         assert_eq!(bytes("enter", false), Some(b"\r".to_vec()));
+        assert_eq!(bytes("ctrl-backspace", false), Some(vec![0x08]));
+    }
+
+    #[test]
+    fn encodes_function_and_modified_keys() {
+        assert_eq!(bytes("f1", false), Some(b"\x1bOP".to_vec()));
+        assert_eq!(bytes("f5", false), Some(b"\x1b[15~".to_vec()));
+        assert_eq!(bytes("f12", false), Some(b"\x1b[24~".to_vec()));
+        assert_eq!(bytes("shift-f5", false), Some(b"\x1b[15;2~".to_vec()));
+        assert_eq!(bytes("ctrl-f1", false), Some(b"\x1b[1;5P".to_vec()));
+        assert_eq!(bytes("insert", false), Some(b"\x1b[2~".to_vec()));
+        // Modified arrows always use CSI, even in application cursor mode.
+        assert_eq!(bytes("ctrl-left", true), Some(b"\x1b[1;5D".to_vec()));
+        assert_eq!(bytes("alt-up", false), Some(b"\x1b[1;3A".to_vec()));
+        assert_eq!(
+            bytes("ctrl-shift-right", false),
+            Some(b"\x1b[1;6C".to_vec())
+        );
+        assert_eq!(bytes("shift-pageup", false), Some(b"\x1b[5;2~".to_vec()));
     }
 }
