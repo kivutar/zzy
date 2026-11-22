@@ -59,6 +59,9 @@ pub struct TerminalView {
     title: Option<String>,
     error: Option<String>,
     keystroke_sub: Option<Subscription>,
+    /// Blinking pauses while the window isn't active (see `start_cursor_blink`).
+    window_active: bool,
+    _activation_sub: Option<Subscription>,
     cursor_visible: bool,
     cell_metrics_measured: bool,
     selection_start: Option<CellPosition>,
@@ -162,7 +165,12 @@ impl Dimensions for SimpleDimensions {
 }
 
 impl TerminalView {
-    pub fn new(cx: &mut Context<Self>, settings: &AppSettings, cwd: Option<PathBuf>) -> Self {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        settings: &AppSettings,
+        cwd: Option<PathBuf>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         let (tx, rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx: tx.clone() };
@@ -211,6 +219,8 @@ impl TerminalView {
             title: None,
             error,
             keystroke_sub: None,
+            window_active: window.is_window_active(),
+            _activation_sub: None,
             cursor_visible: true,
             cell_metrics_measured: false,
             selection_start: None,
@@ -230,6 +240,12 @@ impl TerminalView {
         view.spawn_message_loop(rx, cx);
         view.start_pty(tx, cx);
         view.start_cursor_blink(cx);
+        view._activation_sub = Some(cx.observe_window_activation(window, |view, window, cx| {
+            view.window_active = window.is_window_active();
+            // Show the cursor right away, whether blinking resumes or pauses.
+            view.cursor_visible = true;
+            cx.notify();
+        }));
         view.start_context_polling(cx);
         view
     }
@@ -334,7 +350,9 @@ impl TerminalView {
                 .timer(Duration::from_millis(530))
                 .await;
             let alive = view.update(cx, |view, cx| {
-                if view.settings.cursor_blink {
+                // No blinking (hence no redraws) while the window is in the
+                // background: an idle zedterm then costs almost nothing.
+                if view.settings.cursor_blink && view.window_active {
                     view.cursor_visible = !view.cursor_visible;
                     cx.notify();
                 }

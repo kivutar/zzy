@@ -97,7 +97,7 @@ impl ZedTerm {
     fn add_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = self.settings.clone();
         let cwd = self.new_tab_directory(cx);
-        let terminal = cx.new(move |cx| TerminalView::new(cx, &settings, cwd));
+        let terminal = cx.new(|cx| TerminalView::new(window, cx, &settings, cwd));
         cx.observe(&terminal, |_zedterm, _terminal, cx| {
             // Propagate terminal changes (e.g., title updates) to the tab bar.
             cx.notify();
