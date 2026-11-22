@@ -23,9 +23,11 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::{cell::Cell, rc::Rc};
 
-/// gpui-kit's default `TabVariant::Tab` height and our horizontal tab padding,
-/// used to place the separators and the line's gap on the tab edges.
-pub(crate) const TAB_HEIGHT: f32 = 32.0;
+/// Tab height: the title bar's, so tabs look the same in their own bar and
+/// in the title bar. gpui-kit fixes tabs at 32px; a minimum height wins over
+/// that in layout, so tabs get this as theirs. With our horizontal tab
+/// padding, it places the separators and the line's gap on the tab edges.
+pub(crate) const TAB_HEIGHT: f32 = 34.0;
 const TAB_PADDING_X: f32 = 8.0;
 
 /// Left and right edges for the line under the tabs, recorded during prepaint.
@@ -213,6 +215,7 @@ impl Zzy {
                                 icon: tab_icon,
                             };
                             Tab::new()
+                                .min_h(px(TAB_HEIGHT))
                                 .prefix(icon)
                                 .label(label)
                                 .px(px(TAB_PADDING_X))
@@ -300,5 +303,17 @@ impl Zzy {
                 .w_full()
                 .h(px(1.)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TAB_HEIGHT;
+    use gpui_kit::{component::TITLE_BAR_HEIGHT, px};
+
+    /// Tabs in their own bar and in the title bar look the same.
+    #[test]
+    fn tabs_are_as_tall_as_the_title_bar() {
+        assert_eq!(px(TAB_HEIGHT), TITLE_BAR_HEIGHT);
     }
 }
