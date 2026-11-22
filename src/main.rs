@@ -110,8 +110,10 @@ impl ZedTerm {
         let settings_view = cx.new(move |cx| SettingsView::new(cx, settings));
         cx.observe(&settings_view, |zedterm, settings_view, cx| {
             let settings = settings_view.read(cx).current_settings();
-            if settings.theme != zedterm.settings.theme {
-                apply_app_theme(settings.theme, cx);
+            if settings.theme != zedterm.settings.theme
+                || settings.background_opacity != zedterm.settings.background_opacity
+            {
+                apply_app_theme(&settings, cx);
             }
             zedterm.settings = settings;
             zedterm.settings_dirty = true;
@@ -129,6 +131,8 @@ impl ZedTerm {
         if !self.settings_dirty {
             return;
         }
+
+        window.set_background_appearance(background_appearance(&self.settings));
 
         for tab in &self.tabs {
             if let TabContent::Terminal(term) = tab {
@@ -195,12 +199,13 @@ impl Render for ZedTerm {
         }
 
         let view = cx.entity();
-        let app_bg = theme_background(self.settings.theme);
         v_flex()
             .size_full()
             .child(
                 // Render custom title bar on top of Root view.
-                TitleBar::new().child(
+                // The window background (painted once by Root) shows through
+                // the title bar, tabs and terminal so translucency is uniform.
+                TitleBar::new().bg(transparent_black()).child(
                     h_flex()
                         .w_full()
                         .pr_2()
@@ -291,7 +296,6 @@ impl Render for ZedTerm {
             .child(
                 v_flex()
                     .id("window-body")
-                    .bg(app_bg)
                     .flex_1()
                     .w_full()
                     .h_full()
@@ -312,33 +316,49 @@ impl Render for ZedTerm {
 /// Must go through `Theme::update` so the render tokens (e.g. `tokens.tab_active`)
 /// stay in sync with `colors`; it also refreshes all windows, so don't call it
 /// from `render`.
-fn apply_app_theme(choice: theme::ThemeChoice, cx: &mut App) {
+fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
+    let choice = settings.theme;
+    let opacity = settings.background_opacity;
     let bg: Hsla = theme_background(choice).into();
     let fg: Hsla = theme_foreground(choice).into();
     let border: Hsla = colors::theme_border(choice).into();
+    // Root paints `background` over the whole window: it is the single
+    // translucent layer. Surfaces drawn on top of it with the same color are
+    // made transparent, otherwise stacked translucent layers would get darker.
+    let window_bg = bg.opacity(opacity);
+    let clear = transparent_black();
     Theme::update(cx, |theme| {
-        theme.background = bg;
-        theme.secondary = bg;
+        theme.background = window_bg;
+        theme.secondary = window_bg;
+        theme.tab_bar = clear;
+        theme.tab_bar_segmented = clear;
+        theme.title_bar = clear;
+        theme.sidebar = clear;
+        theme.tab_active = border.opacity(opacity);
         theme.foreground = fg;
         theme.secondary_foreground = fg;
         theme.tab_foreground = fg;
-        theme.tab_bar = bg;
-        theme.tab_bar_segmented = bg;
-        theme.title_bar = bg;
+        theme.sidebar_foreground = fg;
+        theme.sidebar_accent_foreground = fg;
+        theme.sidebar_accent = border.opacity(opacity);
         theme.border = border;
         theme.input = border;
         theme.ring = border;
-        theme.sidebar = bg;
-        theme.sidebar_foreground = fg;
-        theme.sidebar_accent = border;
-        theme.sidebar_accent_foreground = fg;
         theme.sidebar_border = border;
         theme.title_bar_border = border;
         theme.window_border = border;
-        theme.tab_active = border;
         theme.table_row_border = border;
         theme.mono_font_family = "Adwaita Mono".into();
     });
+}
+
+/// Blur what's behind the window when it is translucent (KDE/Wayland, macOS).
+fn background_appearance(settings: &AppSettings) -> WindowBackgroundAppearance {
+    if settings.background_blur && settings.background_opacity < 1.0 {
+        WindowBackgroundAppearance::Blurred
+    } else {
+        WindowBackgroundAppearance::Transparent
+    }
 }
 
 fn main() {
@@ -347,7 +367,8 @@ fn main() {
     app.run(move |cx| {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
-        apply_app_theme(AppSettings::default().theme, cx);
+        let settings = AppSettings::default();
+        apply_app_theme(&settings, cx);
 
         let window_options = WindowOptions {
             // Setup GPUI to use custom title bar and client-side decorations for Wayland/X11.
@@ -357,7 +378,7 @@ fn main() {
             }),
             app_id: Some("zedterm".into()),
             window_decorations: Some(WindowDecorations::Client),
-            window_background: WindowBackgroundAppearance::Transparent,
+            window_background: background_appearance(&settings),
             window_bounds: Some(WindowBounds::centered(size(px(800.), px(600.)), cx)),
             ..Default::default()
         };

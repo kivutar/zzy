@@ -326,7 +326,6 @@ impl Render for TerminalView {
 
         div()
             .id("terminal-view")
-            .bg(cx.theme().secondary)
             .flex_1()
             .size_full()
             .relative()

@@ -12,3 +12,12 @@ portable-pty = "0.9.0"
 alacritty_terminal = "0.25.1"
 parking_lot = "0.12.5"
 futures = "0.3"
+
+# Workaround for KWin (6.8) offsetting the ext-background-effect blur region by
+# the window geometry, although the protocol defines it in surface-local
+# coordinates: with client-side decorations the blur ended up shifted, leaving
+# unblurred bands on the left/top edges. Only src/linux/wayland/window.rs
+# differs from gpui-pre-linux 0.3.12. On spec-compliant compositors this would
+# shift the blur the other way; drop it once KWin is fixed.
+[patch.crates-io]
+gpui-pre-linux = { path = "patches/gpui-pre-linux" }

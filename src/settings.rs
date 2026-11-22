@@ -23,6 +23,9 @@ pub struct AppSettings {
     pub scrollback: usize,
     pub scrollbar: ScrollbarVisibility,
     pub theme: ThemeChoice,
+    /// Window background opacity, 0.0..=1.0.
+    pub background_opacity: f32,
+    pub background_blur: bool,
 }
 
 impl Default for AppSettings {
@@ -36,6 +39,8 @@ impl Default for AppSettings {
             scrollback: 1000,
             scrollbar: ScrollbarVisibility::Auto,
             theme: ThemeChoice::HamiMelonDark,
+            background_opacity: 1.0,
+            background_blur: true,
         }
     }
 }
@@ -83,6 +88,8 @@ const SCROLLBARS: Choices<ScrollbarVisibility> = &[
 
 const FONT_SIZE_RANGE: (f64, f64) = (8.0, 72.0);
 const SCROLLBACK_RANGE: (f64, f64) = (0.0, 50_000.0);
+/// In percent. Below ~10% the window becomes hard to find.
+const OPACITY_RANGE: (f64, f64) = (10.0, 100.0);
 
 pub struct SettingsView {
     focus_handle: FocusHandle,
@@ -186,6 +193,27 @@ impl Render for SettingsView {
             let (read, write) = bind(&view, |s| s.cursor_blink, |s, v| s.cursor_blink = v);
             SettingField::switch(read, write).default_value(defaults.cursor_blink)
         };
+        let opacity = {
+            let (read, write) = bind(
+                &view,
+                |s| (s.background_opacity as f64 * 100.0).round(),
+                |s, v| {
+                    s.background_opacity =
+                        (v.clamp(OPACITY_RANGE.0, OPACITY_RANGE.1) / 100.0) as f32
+                },
+            );
+            let options = NumberFieldOptions {
+                min: OPACITY_RANGE.0,
+                max: OPACITY_RANGE.1,
+                step: 5.0,
+            };
+            SettingField::number_input(options, read, write)
+                .default_value(defaults.background_opacity as f64 * 100.0)
+        };
+        let blur = {
+            let (read, write) = bind(&view, |s| s.background_blur, |s, v| s.background_blur = v);
+            SettingField::switch(read, write).default_value(defaults.background_blur)
+        };
         let scrollback = {
             let (read, write) = bind(
                 &view,
@@ -216,14 +244,14 @@ impl Render for SettingsView {
                             SettingItem::new("Font Size", font_size),
                             SettingItem::new("Ignore Bold", ignore_bold),
                         ]))
-                        .group(
-                            SettingGroup::new()
-                                .title("Theme")
-                                .items(vec![SettingItem::new(
-                                    "Color Theme",
-                                    dropdown(&view, THEMES, |s| s.theme, |s, v| s.theme = v),
-                                )]),
-                        )
+                        .group(SettingGroup::new().title("Theme").items(vec![
+                            SettingItem::new(
+                                "Color Theme",
+                                dropdown(&view, THEMES, |s| s.theme, |s, v| s.theme = v),
+                            ),
+                            SettingItem::new("Background Opacity (%)", opacity),
+                            SettingItem::new("Background Blur", blur),
+                        ]))
                         .group(SettingGroup::new().title("Cursor").items(vec![
                             SettingItem::new("Cursor Blinking", cursor_blink),
                             SettingItem::new(

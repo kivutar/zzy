@@ -206,7 +206,6 @@ const DEFAULT_THEME: ThemeOverrides = ThemeOverrides {
     named: &[
         (ansi::NamedColor::Foreground, 0xccccccff),
         (ansi::NamedColor::BrightForeground, 0xb3b3b3ff),
-        (ansi::NamedColor::Background, 0x00000000),
         (ansi::NamedColor::Cursor, 0x5c78e2ff),
         (ansi::NamedColor::Black, 0x282c33ff),
         (ansi::NamedColor::BrightBlack, 0x525561ff),
