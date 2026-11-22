@@ -6,6 +6,7 @@ mod render;
 
 use crate::colors::{palette_for, Palette};
 use crate::settings::{AppSettings, BellMode, CursorShapeSetting, FONT_SIZE_RANGE};
+use crate::theme::ThemeChoice;
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
     grid::{Dimensions, Scroll},
@@ -37,6 +38,9 @@ pub struct TerminalView {
     cols: usize,
     /// The settings this terminal currently follows (see `apply_settings`).
     settings: AppSettings,
+    /// The color theme in use: the dark or light one from `settings`,
+    /// resolved by the window (which knows the desktop's preference).
+    theme: ThemeChoice,
     /// Effective font size: `settings.font_size` plus this tab's zoom.
     font_size: f32,
     /// Per-tab zoom offset in points (Ctrl+=/-/0, Ctrl+scroll); not saved.
@@ -147,6 +151,7 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
         settings: &AppSettings,
+        theme: ThemeChoice,
         cwd: Option<PathBuf>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -194,6 +199,7 @@ impl TerminalView {
             rows: render::DEFAULT_ROWS,
             cols: render::DEFAULT_COLS,
             settings: settings.clone(),
+            theme,
             font_size,
             zoom: 0.0,
             cell_width: render::DEFAULT_CELL_WIDTH,
@@ -287,8 +293,7 @@ impl TerminalView {
             // The shell exited (the PTY thread has stopped).
             Event::Exit => cx.emit(TerminalExited),
             Event::ColorRequest(index, formatter) => {
-                let palette =
-                    Palette::new(self.term.lock().colors(), palette_for(self.settings.theme));
+                let palette = Palette::new(self.term.lock().colors(), palette_for(self.theme));
                 self.write_bytes(formatter(palette.rgb_for_slot(index)).as_bytes());
             }
             // OSC 52 copy (tmux, vim, also over SSH).
@@ -509,10 +514,12 @@ impl TerminalView {
     pub(crate) fn apply_settings(
         &mut self,
         settings: &AppSettings,
+        theme: ThemeChoice,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let old = std::mem::replace(&mut self.settings, settings.clone());
+        self.theme = theme;
 
         if old.font_size != settings.font_size
             || old.font_family != settings.font_family

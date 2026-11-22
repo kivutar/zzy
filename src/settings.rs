@@ -26,7 +26,13 @@ pub struct AppSettings {
     pub bold_text: BoldText,
     pub scrollback: usize,
     pub scrollbar: ScrollbarVisibility,
-    pub theme: ThemeChoice,
+    /// Light or dark, or following the desktop.
+    pub appearance: Appearance,
+    /// Used when the appearance is dark. Read from `theme` in older settings,
+    /// which only had dark themes.
+    #[serde(alias = "theme")]
+    pub dark_theme: ThemeChoice,
+    pub light_theme: ThemeChoice,
     /// Window background opacity, 0.0..=1.0.
     pub background_opacity: f32,
     pub background_blur: bool,
@@ -66,7 +72,9 @@ impl Default for AppSettings {
             bold_text: BoldText::BoldFont,
             scrollback: 1000,
             scrollbar: ScrollbarVisibility::Auto,
-            theme: ThemeChoice::HamiMelonDark,
+            appearance: Appearance::System,
+            dark_theme: ThemeChoice::HamiMelonDark,
+            light_theme: ThemeChoice::HamiMelonLight,
             language: Language::System,
             background_opacity: 1.0,
             background_blur: true,
@@ -88,6 +96,20 @@ impl Default for AppSettings {
 
 impl AppSettings {
     /// Clamp values (e.g. from a hand-edited file) to what the UI allows.
+    /// The theme to use, given whether the desktop prefers dark.
+    pub fn theme(&self, system_dark: bool) -> ThemeChoice {
+        let dark = match self.appearance {
+            Appearance::System => system_dark,
+            Appearance::Dark => true,
+            Appearance::Light => false,
+        };
+        if dark {
+            self.dark_theme
+        } else {
+            self.light_theme
+        }
+    }
+
     pub fn sanitized(mut self) -> Self {
         let clamp =
             |v: f64, (min, max): (f64, f64)| if v.is_nan() { min } else { v.clamp(min, max) };
@@ -170,6 +192,15 @@ pub enum NewTabDirectory {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Appearance {
+    /// Follow the desktop's light or dark preference.
+    System,
+    Dark,
+    Light,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
     /// Follow the system locale.
     #[serde(rename = "system")]
@@ -210,7 +241,7 @@ const LANGUAGES: Choices<Language> = &[
     (Language::Japanese, "ja", Label::Name("日本語")),
 ];
 
-const THEMES: Choices<ThemeChoice> = &[
+const DARK_THEMES: Choices<ThemeChoice> = &[
     (ThemeChoice::RosePine, "rose-pine", Label::Name("Rosé Pine")),
     (ThemeChoice::Dracula, "dracula", Label::Name("Dracula")),
     (
@@ -224,6 +255,36 @@ const THEMES: Choices<ThemeChoice> = &[
         Label::Name("Hami Melon Dark"),
     ),
     (ThemeChoice::AyuDark, "ayu-dark", Label::Name("Ayu Dark")),
+];
+
+const LIGHT_THEMES: Choices<ThemeChoice> = &[
+    (
+        ThemeChoice::RosePineDawn,
+        "rose-pine-dawn",
+        Label::Name("Rosé Pine Dawn"),
+    ),
+    (ThemeChoice::Alucard, "alucard", Label::Name("Alucard")),
+    (
+        ThemeChoice::GruvboxLight,
+        "gruvbox-light",
+        Label::Name("Gruvbox Light"),
+    ),
+    (
+        ThemeChoice::HamiMelonLight,
+        "hami-melon-light",
+        Label::Name("Hami Melon Light"),
+    ),
+    (ThemeChoice::AyuLight, "ayu-light", Label::Name("Ayu Light")),
+];
+
+const APPEARANCES: Choices<Appearance> = &[
+    (
+        Appearance::System,
+        "system",
+        Label::Key("choice.system_appearance"),
+    ),
+    (Appearance::Dark, "dark", Label::Key("choice.dark")),
+    (Appearance::Light, "light", Label::Key("choice.light")),
 ];
 
 const CURSOR_SHAPES: Choices<CursorShapeSetting> = &[
@@ -504,8 +565,31 @@ impl Render for SettingsView {
                             .title(tr("settings.group.theme"))
                             .items(vec![
                                 SettingItem::new(
-                                    tr("settings.color_theme"),
-                                    dropdown(&view, THEMES, |s| s.theme, |s, v| s.theme = v),
+                                    tr("settings.appearance"),
+                                    dropdown(
+                                        &view,
+                                        APPEARANCES,
+                                        |s| s.appearance,
+                                        |s, v| s.appearance = v,
+                                    ),
+                                ),
+                                SettingItem::new(
+                                    tr("settings.dark_theme"),
+                                    dropdown(
+                                        &view,
+                                        DARK_THEMES,
+                                        |s| s.dark_theme,
+                                        |s, v| s.dark_theme = v,
+                                    ),
+                                ),
+                                SettingItem::new(
+                                    tr("settings.light_theme"),
+                                    dropdown(
+                                        &view,
+                                        LIGHT_THEMES,
+                                        |s| s.light_theme,
+                                        |s, v| s.light_theme = v,
+                                    ),
                                 ),
                                 SettingItem::new(tr("settings.background_opacity"), opacity),
                                 SettingItem::new(tr("settings.background_blur"), blur),
@@ -606,5 +690,51 @@ impl Render for SettingsView {
 impl Focusable for SettingsView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_follows_the_appearance() {
+        let settings = |appearance| AppSettings {
+            appearance,
+            dark_theme: ThemeChoice::Dracula,
+            light_theme: ThemeChoice::Alucard,
+            ..Default::default()
+        };
+        assert_eq!(
+            settings(Appearance::System).theme(true),
+            ThemeChoice::Dracula
+        );
+        assert_eq!(
+            settings(Appearance::System).theme(false),
+            ThemeChoice::Alucard
+        );
+        assert_eq!(
+            settings(Appearance::Dark).theme(false),
+            ThemeChoice::Dracula
+        );
+        assert_eq!(
+            settings(Appearance::Light).theme(true),
+            ThemeChoice::Alucard
+        );
+    }
+
+    #[test]
+    fn older_theme_setting_becomes_the_dark_theme() {
+        let loaded: AppSettings = toml::from_str(r#"theme = "gruvbox-dark""#).unwrap();
+        assert_eq!(loaded.dark_theme, ThemeChoice::GruvboxDark);
+        assert_eq!(loaded.light_theme, AppSettings::default().light_theme);
+    }
+
+    #[test]
+    fn theme_lists_hold_only_their_kind() {
+        assert!(DARK_THEMES.iter().all(|(theme, ..)| theme.is_dark()));
+        assert!(LIGHT_THEMES.iter().all(|(theme, ..)| !theme.is_dark()));
+        assert!(AppSettings::default().dark_theme.is_dark());
+        assert!(!AppSettings::default().light_theme.is_dark());
     }
 }

@@ -15,6 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use settings::{AppSettings, NewTabDirectory, SettingsView};
 use terminal::{TerminalBell, TerminalExited, TerminalView};
+use theme::ThemeChoice;
 
 pub struct Zzy {
     tabs: Vec<TabContent>,
@@ -22,6 +23,8 @@ pub struct Zzy {
     focus_pending: bool,
     keystroke_sub: Option<Subscription>,
     settings: AppSettings,
+    /// Whether the desktop prefers a dark appearance (for `Appearance::System`).
+    system_dark: bool,
     window_state: config::WindowState,
     _window_subscriptions: Vec<Subscription>,
     _save_window_state: Option<Task<()>>,
@@ -40,6 +43,7 @@ impl Zzy {
             focus_pending: true,
             keystroke_sub: None,
             settings,
+            system_dark: is_dark(window.appearance()),
             window_state: window_state_of(window),
             _window_subscriptions: Vec::new(),
             _save_window_state: None,
@@ -48,22 +52,36 @@ impl Zzy {
         // Remember the window size. Saved shortly after each resize rather than
         // on exit: closing through the title bar removes the window directly
         // (no should-close callback) and the app exits without quit hooks.
-        zzy._window_subscriptions = vec![cx.observe_window_bounds(window, |zzy, window, cx| {
-            // The fullscreen button's icon follows the window state.
-            cx.notify();
-            let state = window_state_of(window);
-            if state == zzy.window_state {
-                return;
+        // The theme follows the desktop's light/dark preference when asked to.
+        let appearance = cx.observe_window_appearance(window, |zzy, window, cx| {
+            let system_dark = is_dark(window.appearance());
+            if system_dark != zzy.system_dark {
+                let old_theme = zzy.theme();
+                zzy.system_dark = system_dark;
+                if zzy.theme() != old_theme {
+                    zzy.apply_theme(window, cx);
+                }
             }
-            zzy.window_state = state;
-            // Replacing the task cancels the pending save: one write per resize.
-            zzy._save_window_state = Some(cx.spawn(async move |_, cx| {
-                cx.background_executor()
-                    .timer(WINDOW_STATE_SAVE_DELAY)
-                    .await;
-                config::save_window_state(&state);
-            }));
-        })];
+        });
+        zzy._window_subscriptions = vec![
+            appearance,
+            cx.observe_window_bounds(window, |zzy, window, cx| {
+                // The fullscreen button's icon follows the window state.
+                cx.notify();
+                let state = window_state_of(window);
+                if state == zzy.window_state {
+                    return;
+                }
+                zzy.window_state = state;
+                // Replacing the task cancels the pending save: one write per resize.
+                zzy._save_window_state = Some(cx.spawn(async move |_, cx| {
+                    cx.background_executor()
+                        .timer(WINDOW_STATE_SAVE_DELAY)
+                        .await;
+                    config::save_window_state(&state);
+                }));
+            }),
+        ];
 
         let view = cx.entity().downgrade();
         zzy.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
@@ -92,14 +110,19 @@ impl Zzy {
             }
         }));
 
+        // `main` themed the app before the window knew the desktop's preference.
+        if zzy.theme() != zzy.settings.theme(true) {
+            apply_app_theme(zzy.theme(), &zzy.settings, cx);
+        }
         zzy.add_terminal_tab(window, cx);
         zzy
     }
 
     fn add_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = self.settings.clone();
+        let theme = self.theme();
         let cwd = self.new_tab_directory(cx);
-        let terminal = cx.new(|cx| TerminalView::new(window, cx, &settings, cwd));
+        let terminal = cx.new(|cx| TerminalView::new(window, cx, &settings, theme, cwd));
         cx.observe(&terminal, |_zzy, _terminal, cx| {
             // Propagate terminal changes (e.g., title updates) to the tab bar.
             cx.notify();
@@ -179,10 +202,10 @@ impl Zzy {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if settings.theme != self.settings.theme
-            || settings.background_opacity != self.settings.background_opacity
-        {
-            apply_app_theme(&settings, cx);
+        let theme_changed = settings.theme(self.system_dark) != self.theme()
+            || settings.background_opacity != self.settings.background_opacity;
+        if theme_changed {
+            apply_app_theme(settings.theme(self.system_dark), &settings, cx);
         }
         if settings.language != self.settings.language {
             i18n::apply(settings.language);
@@ -192,11 +215,35 @@ impl Zzy {
         window.set_background_appearance(background_appearance(&settings));
         for tab in &self.tabs {
             if let TabContent::Terminal(term) = tab {
-                term.update(cx, |view, cx| view.apply_settings(&settings, window, cx));
+                let theme = settings.theme(self.system_dark);
+                term.update(cx, |view, cx| {
+                    view.apply_settings(&settings, theme, window, cx)
+                });
             }
         }
         config::save_settings(&settings);
         self.settings = settings;
+        cx.notify();
+    }
+
+    /// The color theme in use: the settings' dark or light one.
+    fn theme(&self) -> ThemeChoice {
+        self.settings.theme(self.system_dark)
+    }
+
+    /// Re-theme the app and every terminal, after the desktop switched
+    /// between light and dark.
+    fn apply_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let theme = self.theme();
+        apply_app_theme(theme, &self.settings, cx);
+        let settings = self.settings.clone();
+        for tab in &self.tabs {
+            if let TabContent::Terminal(term) = tab {
+                term.update(cx, |view, cx| {
+                    view.apply_settings(&settings, theme, window, cx)
+                });
+            }
+        }
         cx.notify();
     }
 
@@ -439,8 +486,18 @@ fn moved_index(index: usize, from: usize, to: usize) -> usize {
 /// Must go through `Theme::update` so the render tokens (e.g. `tokens.tab_active`)
 /// stay in sync with `colors`; it also refreshes all windows, so don't call it
 /// from `render`.
-fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
-    let choice = settings.theme;
+fn apply_app_theme(choice: ThemeChoice, settings: &AppSettings, cx: &mut App) {
+    // gpui-kit's own widgets (inputs, switches, menus) in the matching mode;
+    // the colors below are then set on top of it.
+    Theme::change(
+        if choice.is_dark() {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        },
+        None,
+        cx,
+    );
     let opacity = settings.background_opacity;
     let bg: Hsla = theme_background(choice).into();
     let fg: Hsla = theme_foreground(choice).into();
@@ -477,6 +534,13 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
         theme.table_row_border = border;
         theme.mono_font_family = settings::DEFAULT_FONT_FAMILY.into();
     });
+}
+
+fn is_dark(appearance: WindowAppearance) -> bool {
+    matches!(
+        appearance,
+        WindowAppearance::Dark | WindowAppearance::VibrantDark
+    )
 }
 
 /// How an edge of the window is framed before we draw anything.
@@ -606,11 +670,12 @@ fn main() {
 
     app.run(move |cx| {
         gpui_kit::init(cx);
-        Theme::change(ThemeMode::Dark, None, cx);
         let settings = config::load_settings();
         i18n::apply(settings.language);
         let window_state = config::load_window_state();
-        apply_app_theme(&settings, cx);
+        // Assume dark until the window knows the desktop's preference; `Zzy::new`
+        // re-themes if it turns out light.
+        apply_app_theme(settings.theme(true), &settings, cx);
 
         let restore_bounds = Bounds::centered(
             None,

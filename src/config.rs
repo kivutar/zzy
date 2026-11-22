@@ -173,7 +173,9 @@ mod tests {
         let loaded: AppSettings = toml::from_str(&text).unwrap();
         assert_eq!(loaded.font_size, 18.0);
         assert_eq!(loaded.background_opacity, 0.8);
-        assert_eq!(loaded.theme, settings.theme);
+        assert_eq!(loaded.dark_theme, settings.dark_theme);
+        assert_eq!(loaded.light_theme, settings.light_theme);
+        assert_eq!(loaded.appearance, settings.appearance);
     }
 
     #[test]

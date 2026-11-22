@@ -126,7 +126,7 @@ impl Render for TerminalView {
             let start = viewport_start(&term);
             let buffer = Self::buffer_segments_for_term(
                 &term,
-                self.settings.theme,
+                self.theme,
                 self.settings.bold_text.bright_colors(),
                 start,
                 start + term.grid().screen_lines(),

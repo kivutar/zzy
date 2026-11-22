@@ -19,9 +19,15 @@ settings.bold_text:
 settings.group.theme:
   en: Theme
   ja: テーマ
-settings.color_theme:
-  en: Color Theme
-  ja: カラーテーマ
+settings.appearance:
+  en: Appearance
+  ja: 外観
+settings.dark_theme:
+  en: Dark Theme
+  ja: ダークテーマ
+settings.light_theme:
+  en: Light Theme
+  ja: ライトテーマ
 settings.background_opacity:
   en: Background Opacity (%)
   ja: 背景の不透明度 (%)
@@ -144,6 +150,15 @@ choice.current_tab_directory:
 choice.home:
   en: Home
   ja: ホーム
+choice.system_appearance:
+  en: System
+  ja: システムに合わせる
+choice.dark:
+  en: Dark
+  ja: ダーク
+choice.light:
+  en: Light
+  ja: ライト
 choice.system_language:
   en: System
   ja: システムに合わせる

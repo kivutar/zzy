@@ -339,13 +339,114 @@ const AYU_DARK: ThemeOverrides = ThemeOverrides {
     border: 0x404042ff,
 };
 
+// Light themes, from each project's official light variant: Rosé Pine Dawn
+// (rose-pine/alacritty), Alucard (draculatheme.com/spec), Gruvbox light and
+// Ayu Light (alacritty-theme, after morhetz/gruvbox and ayu-colors/ayu-iTerm),
+// Hami Melon Light (isunjn/hami-melon-zed). Borders use each palette's own
+// subtle UI color (Ayu's is derived, it has no single one).
+
+const ROSE_PINE_DAWN: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0xf2e9e1ff, 0xb4637aff, 0x286983ff, 0xea9d34ff, 0x56949fff, 0x907aa9ff, 0xd7827eff,
+        0x575279ff, 0x9893a5ff, 0xb4637aff, 0x286983ff, 0xea9d34ff, 0x56949fff, 0x907aa9ff,
+        0xd7827eff, 0x575279ff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0x575279ff),
+        (ansi::NamedColor::BrightForeground, 0x575279ff),
+        (ansi::NamedColor::DimForeground, 0x797593ff),
+        (ansi::NamedColor::Background, 0xfaf4edff),
+        (ansi::NamedColor::Cursor, 0x575279ff),
+    ],
+    default_fg: 0x575279ff,
+    default_bg: 0xfaf4edff,
+    border: 0xdfdad9ff,
+};
+
+const ALUCARD: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0xfffbebff, 0xcb3a2aff, 0x14710aff, 0x846e15ff, 0x644ac9ff, 0xa3144dff, 0x036a96ff,
+        0x1f1f1fff, 0x6c664bff, 0xd74c3dff, 0x198d0cff, 0x9e841aff, 0x7862d0ff, 0xbf185aff,
+        0x047fb4ff, 0x2c2b31ff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0x1f1f1fff),
+        (ansi::NamedColor::BrightForeground, 0x1f1f1fff),
+        (ansi::NamedColor::DimForeground, 0x6c664bff),
+        (ansi::NamedColor::Background, 0xfffbebff),
+        (ansi::NamedColor::Cursor, 0x1f1f1fff),
+    ],
+    default_fg: 0x1f1f1fff,
+    default_bg: 0xfffbebff,
+    border: 0xdedccfff,
+};
+
+const GRUVBOX_LIGHT: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0xfbf1c7ff, 0xcc241dff, 0x98971aff, 0xd79921ff, 0x458588ff, 0xb16286ff, 0x689d6aff,
+        0x7c6f64ff, 0x928374ff, 0x9d0006ff, 0x79740eff, 0xb57614ff, 0x076678ff, 0x8f3f71ff,
+        0x427b58ff, 0x3c3836ff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0x3c3836ff),
+        (ansi::NamedColor::BrightForeground, 0x3c3836ff),
+        (ansi::NamedColor::DimForeground, 0x7c6f64ff),
+        (ansi::NamedColor::Background, 0xfbf1c7ff),
+        (ansi::NamedColor::Cursor, 0x3c3836ff),
+    ],
+    default_fg: 0x3c3836ff,
+    default_bg: 0xfbf1c7ff,
+    border: 0xd5c4a1ff,
+};
+
+const AYU_LIGHT: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0x010101ff, 0xe7666aff, 0x80ab24ff, 0xeba54dff, 0x4196dfff, 0x9870c3ff, 0x51b891ff,
+        0xc1c1c1ff, 0x343434ff, 0xee9295ff, 0x9fd32fff, 0xf0bc7bff, 0x6daee6ff, 0xb294d2ff,
+        0x75c7a8ff, 0xdbdbdbff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0x5c6166ff),
+        (ansi::NamedColor::BrightForeground, 0x5c6166ff),
+        (ansi::NamedColor::Background, 0xfcfcfcff),
+        (ansi::NamedColor::Cursor, 0x5c6166ff),
+    ],
+    default_fg: 0x5c6166ff,
+    default_bg: 0xfcfcfcff,
+    border: 0xe6e7e9ff,
+};
+
+const HAMI_MELON_LIGHT: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0x585550ff, 0xd36151ff, 0x598e66ff, 0xe98266ff, 0x5c78e2ff, 0x984ea5ff, 0x46aeb1ff,
+        0xeeeeeeff, 0x909090ff, 0xd36151ff, 0x598e66ff, 0xe98266ff, 0x5c78e2ff, 0x984ea5ff,
+        0x46aeb1ff, 0xe0e0e0ff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0x585550ff),
+        (ansi::NamedColor::BrightForeground, 0x585550ff),
+        (ansi::NamedColor::DimForeground, 0x78797aff),
+        (ansi::NamedColor::Background, 0xfafafaff),
+        (ansi::NamedColor::Cursor, 0x5c78e2ff),
+    ],
+    default_fg: 0x585550ff,
+    default_bg: 0xfafafaff,
+    border: 0xdfdfe0ff,
+};
+
 pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOverrides {
+    use crate::theme::ThemeChoice::*;
     match theme {
-        crate::theme::ThemeChoice::RosePine => &ROSE_PINE,
-        crate::theme::ThemeChoice::Dracula => &DRACULA,
-        crate::theme::ThemeChoice::GruvboxDark => &GRUVBOX_DARK,
-        crate::theme::ThemeChoice::AyuDark => &AYU_DARK,
-        crate::theme::ThemeChoice::HamiMelonDark => &DEFAULT_THEME,
+        RosePine => &ROSE_PINE,
+        Dracula => &DRACULA,
+        GruvboxDark => &GRUVBOX_DARK,
+        AyuDark => &AYU_DARK,
+        HamiMelonDark => &DEFAULT_THEME,
+        RosePineDawn => &ROSE_PINE_DAWN,
+        Alucard => &ALUCARD,
+        GruvboxLight => &GRUVBOX_LIGHT,
+        AyuLight => &AYU_LIGHT,
+        HamiMelonLight => &HAMI_MELON_LIGHT,
     }
 }
 
