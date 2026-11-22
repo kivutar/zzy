@@ -7,6 +7,9 @@
 //!   Instead the bar is clipped 1px short (hiding its line) and we paint the
 //!   line ourselves, leaving a gap under the active tab ("connected" tab).
 //!
+//! - The bar is shifted 1px left (clipped) so an active first tab's left
+//!   border doesn't double the window border.
+//!
 //! If gpui-kit gains a theme color for inactive tab borders, most of this can go.
 
 use crate::{TabContent, ZedTerm};
@@ -90,6 +93,10 @@ impl ZedTerm {
                     TabBar::new("tabs")
                         .w_full()
                         .flex_shrink_0()
+                        // Shifted 1px left so the first tab's left border falls in
+                        // the clip: when it's the active tab, its border would
+                        // otherwise double the window border next to it.
+                        .ml(px(-1.))
                         .selected_index(self.selected_index)
                         .on_click({
                             let view = view.clone();
