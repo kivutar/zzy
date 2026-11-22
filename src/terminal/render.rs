@@ -28,67 +28,20 @@ pub const DEFAULT_CELL_HEIGHT: f32 = 24.0;
 pub const DEFAULT_FONT_SIZE: f32 = 15.0;
 
 impl TerminalView {
-    /// `pinned_to_bottom`: a scroll to the bottom is pending, so use the bottom
-    /// of the buffer instead of the (not yet updated) scroll offset.
-    pub(crate) fn buffer_segments(&self, pinned_to_bottom: bool) -> BufferSnapshot {
-        let (start_line, end_line) =
-            self.visible_line_range(pinned_to_bottom)
-                .unwrap_or_else(|| {
-                    let total = self.term.grid().total_lines();
-                    (0, total)
-                });
+    /// The visible screen: `screen_lines` rows starting at the viewport, which
+    /// follows alacritty's display offset (scrolled back or at the bottom).
+    pub(crate) fn buffer_segments(&self) -> BufferSnapshot {
+        let start = self.viewport_start();
         Self::buffer_segments_for_term(
             &self.term,
             self.settings.theme,
             self.settings.bold_text.bright_colors(),
-            start_line,
-            end_line,
+            start,
+            start + self.term.grid().screen_lines(),
         )
     }
 
-    fn visible_line_range(&self, pinned_to_bottom: bool) -> Option<(usize, usize)> {
-        let bounds = self.last_bounds?;
-        let grid_ref = self.term.grid();
-        let total_lines = grid_ref.total_lines();
-        if total_lines == 0 {
-            return Some((0, 0));
-        }
-
-        let cell_height = self.cell_height.max(1.0);
-        let viewport_height: f32 = bounds.size.height.into();
-        if viewport_height <= f32::EPSILON {
-            return None;
-        }
-
-        let max_visible = (viewport_height / cell_height).ceil() as usize;
-        let overscan = 8usize;
-        let offset_y = if pinned_to_bottom {
-            (total_lines as f32 * cell_height - viewport_height).max(0.0)
-        } else {
-            let offset = self.scroll_handle.offset();
-            let max_offset = self.scroll_handle.max_offset();
-            let mut offset_y: f32 = (-offset.y).into();
-            offset_y = offset_y.max(0.0);
-            let max_scroll_y: f32 = max_offset.y.into();
-            if max_scroll_y > f32::EPSILON {
-                offset_y = offset_y.min(max_scroll_y);
-            }
-            offset_y
-        };
-
-        let mut start_line = (offset_y / cell_height).floor() as usize;
-        if start_line > total_lines {
-            start_line = total_lines;
-        }
-        start_line = start_line.saturating_sub(overscan);
-
-        let mut end_line = start_line + max_visible + overscan * 2;
-        end_line = end_line.min(total_lines);
-
-        Some((start_line, end_line))
-    }
-
-    fn buffer_segments_for_term(
+    pub(super) fn buffer_segments_for_term(
         term: &Term<TerminalEventProxy>,
         theme: ThemeChoice,
         bold_is_bright: bool,
@@ -199,7 +152,6 @@ impl TerminalView {
             segments_by_line: segments,
             palette,
             columns: cols,
-            total_lines,
             start_line: clamped_start,
             cursor_shape: cursor.shape,
             cursor_position,
@@ -211,8 +163,7 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_cell_metrics(window, cx);
 
-        let pinned_to_bottom = std::mem::take(&mut self.scroll_to_bottom_pending);
-        let buffer = self.buffer_segments(pinned_to_bottom);
+        let buffer = self.buffer_segments();
         let palette = buffer.palette;
         let cursor_shape = buffer.cursor_shape;
         let block_cursor = matches!(
@@ -222,22 +173,12 @@ impl Render for TerminalView {
         let cursor_position = buffer.cursor_position.filter(|_| self.cursor_visible);
         let selection = self.selection_range();
         let cell_height = self.cell_height;
-        let total_height = buffer.total_lines as f32 * cell_height;
-        let top_padding = buffer.start_line as f32 * cell_height;
-        let visible_height = buffer.segments_by_line.len() as f32 * cell_height;
-        let bottom_padding = (total_height - top_padding - visible_height).max(0.0);
         let view = cx.entity();
 
         let mut lines_view = v_flex()
             .id("terminal-lines")
             .w_full()
-            // On a child of the scroll area so it runs before native scrolling
-            // and can claim the wheel for mouse reporting / alternate scroll.
-            .on_scroll(cx.listener(Self::handle_scroll))
-            .when_some(self.error.clone(), |this, err| this.child(div().child(err)))
-            .when(top_padding > 0.0, |this| {
-                this.child(div().h(px(top_padding)))
-            });
+            .when_some(self.error.clone(), |this, err| this.child(div().child(err)));
 
         for (idx, segments) in buffer.segments_by_line.into_iter().enumerate() {
             let line = buffer.start_line + idx;
@@ -304,21 +245,17 @@ impl Render for TerminalView {
 
             lines_view = lines_view.child(line_row);
         }
-        let lines_view = lines_view.when(bottom_padding > 0.0, |this| {
-            this.child(div().h(px(bottom_padding)))
-        });
-
-        let scroll_area = div()
-            .id("terminal-scroll")
+        let content = div()
+            .id("terminal-content")
             .size_full()
+            .overflow_hidden()
             .font_family(self.settings.font_family.clone())
             .text_size(px(self.font_size))
             .line_height(px(cell_height))
             .whitespace_nowrap()
             .cursor_text()
-            .overflow_y_scroll()
-            .scrollbar_width(px(8.0))
-            .track_scroll(&self.scroll_handle)
+            // Wheel: mouse reporting, alternate scroll, zoom, or scrollback.
+            .on_scroll(cx.listener(Self::handle_scroll))
             // Inside the container so mouse reporting runs before selection
             // and the context menu, which it suppresses while active.
             .on_any_mouse_down(cx.listener(Self::report_mouse_down))
@@ -352,8 +289,8 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
-            .child(scroll_area)
-            .children(self.render_scrollbar(pinned_to_bottom, cx))
+            .child(content)
+            .children(self.render_scrollbar(cx))
             .when(self.bell_flash_visible(), |this| {
                 this.child(
                     div()
@@ -415,32 +352,26 @@ impl Render for TerminalView {
 }
 
 impl TerminalView {
-    fn render_scrollbar(
-        &self,
-        pinned_to_bottom: bool,
-        cx: &Context<Self>,
-    ) -> Option<impl IntoElement> {
+    /// A thumb showing where the viewport is in the scrollback (display only).
+    fn render_scrollbar(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
         let viewport_height: f32 = self.last_bounds?.size.height.into();
-        let scroll_max: f32 = self.scroll_handle.max_offset().y.into();
+        let grid = self.term.grid();
+        let screen = grid.screen_lines() as f32;
+        let history = grid.total_lines().saturating_sub(grid.screen_lines()) as f32;
         match self.settings.scrollbar {
             ScrollbarVisibility::Never => return None,
-            ScrollbarVisibility::Auto if scroll_max <= 0.5 || viewport_height <= 0.5 => {
-                return None
-            }
+            ScrollbarVisibility::Auto if history == 0.0 || viewport_height <= 0.5 => return None,
             _ => {}
         }
 
-        let content_height = viewport_height + scroll_max;
         let thumb_height =
-            (viewport_height / content_height * viewport_height).clamp(20.0, viewport_height);
+            (screen / (screen + history) * viewport_height).clamp(20.0, viewport_height);
         let track_height = (viewport_height - thumb_height).max(0.0);
-        let offset_y: f32 = (-self.scroll_handle.offset().y).into();
-        let progress = if pinned_to_bottom {
+        // 1.0 at the bottom (display offset 0), 0.0 at the top of the history.
+        let progress = if history == 0.0 {
             1.0
-        } else if scroll_max < f32::EPSILON {
-            0.0
         } else {
-            (offset_y / scroll_max).clamp(0.0, 1.0)
+            1.0 - grid.display_offset() as f32 / history
         };
 
         Some(

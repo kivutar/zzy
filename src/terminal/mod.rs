@@ -8,7 +8,7 @@ use crate::colors::{palette_for, Palette};
 use crate::settings::{AppSettings, BellMode, CursorShapeSetting, FONT_SIZE_RANGE};
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
-    grid::Dimensions,
+    grid::{Dimensions, Scroll},
     term::{ClipboardType, Config, Term},
     vte::ansi,
 };
@@ -16,7 +16,7 @@ pub use context::ProcessContext;
 use futures::channel::mpsc;
 use gpui_kit::{
     font, px, Bounds, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, Hsla, Rgba,
-    ScrollHandle, SharedString, Subscription, TextRun, Window,
+    SharedString, Subscription, TextRun, Window,
 };
 use parking_lot::Mutex;
 use portable_pty::{Child, MasterPty};
@@ -45,11 +45,6 @@ pub struct TerminalView {
     zoom: f32,
     cell_width: f32,
     cell_height: f32,
-    scroll_handle: ScrollHandle,
-    /// `ScrollHandle::scroll_to_bottom` only moves the offset during the next
-    /// layout, after `render` has already picked the visible lines from the old
-    /// offset. While this is set, `render` shows the bottom directly.
-    scroll_to_bottom_pending: bool,
     program_name: String,
     /// Program and arguments to run in the PTY.
     argv: Vec<String>,
@@ -120,7 +115,6 @@ pub(crate) struct BufferSnapshot {
     segments_by_line: Vec<Vec<CellRender>>,
     palette: Palette,
     columns: usize,
-    total_lines: usize,
     start_line: usize,
     cursor_shape: ansi::CursorShape,
     cursor_position: Option<CellPosition>,
@@ -181,7 +175,6 @@ impl TerminalView {
             proxy,
         );
         let font_size: f32 = settings.font_size;
-        let scroll_handle = ScrollHandle::new();
         let (argv, error) = match pty::command_argv(settings) {
             Ok(argv) => (argv, None),
             Err(err) => (
@@ -210,8 +203,6 @@ impl TerminalView {
             zoom: 0.0,
             cell_width: render::DEFAULT_CELL_WIDTH,
             cell_height: render::DEFAULT_CELL_HEIGHT,
-            scroll_handle,
-            scroll_to_bottom_pending: false,
             program_name,
             argv,
             cwd,
@@ -278,13 +269,9 @@ impl TerminalView {
     fn handle_msg(&mut self, msg: TerminalMsg, cx: &mut Context<Self>) {
         match msg {
             TerminalMsg::Output(bytes) => {
-                // The offset is stale while a scroll to the bottom is pending.
-                let stick_to_bottom = self.scroll_to_bottom_pending || self.is_scrolled_to_bottom();
+                // alacritty keeps a scrolled-back view in place as output arrives.
                 self.parser.advance(&mut self.term, &bytes);
                 self.cursor_visible = true;
-                if stick_to_bottom {
-                    self.scroll_to_bottom();
-                }
                 cx.notify();
             }
             TerminalMsg::Event(event) => self.handle_event(event, cx),
@@ -474,23 +461,19 @@ impl TerminalView {
         })
     }
 
-    fn is_scrolled_to_bottom(&self) -> bool {
-        let offset = self.scroll_handle.offset();
-        let offset_y: f32 = offset.y.into();
-        let max_offset = self.scroll_handle.max_offset();
-        let max_y: f32 = (-max_offset.y).into();
-
-        (offset_y - max_y).abs() < 1.0 || offset_y < max_y
+    /// Index (from the top of the scrollback) of the first visible line:
+    /// alacritty owns scrolling through its display offset.
+    pub(crate) fn viewport_start(&self) -> usize {
+        viewport_start(&self.term)
     }
 
-    fn scroll_to_bottom(&mut self) {
-        self.scroll_handle.scroll_to_bottom();
-        self.scroll_to_bottom_pending = true;
+    pub(crate) fn scroll(&mut self, scroll: Scroll, cx: &mut Context<Self>) {
+        self.term.scroll_display(scroll);
+        cx.notify();
     }
 
     fn scroll_to_bottom_for_input(&mut self, cx: &mut Context<Self>) {
-        self.scroll_to_bottom();
-        cx.notify();
+        self.scroll(Scroll::Bottom, cx);
     }
 
     /// The shell's current directory (Linux: `/proc/<pid>/cwd`), used to
@@ -565,6 +548,13 @@ impl TerminalView {
 
         cx.notify();
     }
+}
+
+fn viewport_start<T>(term: &Term<T>) -> usize {
+    let grid = term.grid();
+    grid.total_lines()
+        .saturating_sub(grid.screen_lines())
+        .saturating_sub(grid.display_offset())
 }
 
 impl Focusable for TerminalView {
@@ -648,6 +638,57 @@ mod tests {
             reply.contains(&expected),
             "{reply:?} should contain {expected}"
         );
+    }
+
+    #[test]
+    fn viewport_follows_alacritty_scrolling() {
+        let (tx, _rx) = mpsc::unbounded();
+        let config = Config {
+            scrolling_history: 100,
+            ..Config::default()
+        };
+        let mut term = Term::new(
+            config,
+            &SimpleDimensions::new(10, 4),
+            TerminalEventProxy { tx },
+        );
+        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::new();
+        for n in 1..=10 {
+            parser.advance(&mut term, format!("{n}\r\n").as_bytes());
+        }
+        let first_visible = |term: &Term<TerminalEventProxy>| {
+            let start = viewport_start(term);
+            let snapshot = TerminalView::buffer_segments_for_term(
+                term,
+                ThemeChoice::Dracula,
+                false,
+                start,
+                start + term.grid().screen_lines(),
+            );
+            let text = |line: &Vec<CellRender>| {
+                line.iter()
+                    .map(|seg| seg.text.as_str())
+                    .collect::<String>()
+                    .trim()
+                    .to_string()
+            };
+            snapshot
+                .segments_by_line
+                .iter()
+                .map(text)
+                .collect::<Vec<_>>()
+        };
+
+        // At the bottom: the last lines and the empty prompt line.
+        assert_eq!(first_visible(&term), vec!["8", "9", "10", ""]);
+        // Scrolled back 3 lines: the view moves into the history.
+        term.scroll_display(Scroll::Delta(3));
+        assert_eq!(first_visible(&term), vec!["5", "6", "7", "8"]);
+        // New output keeps a scrolled-back view in place.
+        parser.advance(&mut term, b"11\r\n");
+        assert_eq!(first_visible(&term), vec!["5", "6", "7", "8"]);
+        term.scroll_display(Scroll::Bottom);
+        assert_eq!(first_visible(&term), vec!["9", "10", "11", ""]);
     }
 
     #[test]

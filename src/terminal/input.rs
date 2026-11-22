@@ -1,6 +1,6 @@
 use super::{CellPosition, SelectionRange, TerminalView};
 use alacritty_terminal::{
-    grid::Dimensions,
+    grid::{Dimensions, Scroll},
     index::{Column, Line},
     term::{cell::Flags, Term, TermMode},
 };
@@ -27,6 +27,28 @@ impl TerminalView {
             };
             if let Some(steps) = steps {
                 self.zoom(steps, window, cx);
+                cx.stop_propagation();
+                return;
+            }
+        }
+
+        // Shift+PageUp/PageDown/Home/End scroll the scrollback (Konsole, xterm),
+        // except in the alternate screen where programs get the keys.
+        let mods = &keystroke.modifiers;
+        if mods.shift
+            && !mods.control
+            && !mods.alt
+            && !self.term.mode().contains(TermMode::ALT_SCREEN)
+        {
+            let scroll = match keystroke.key.as_str() {
+                "pageup" => Some(Scroll::PageUp),
+                "pagedown" => Some(Scroll::PageDown),
+                "home" => Some(Scroll::Top),
+                "end" => Some(Scroll::Bottom),
+                _ => None,
+            };
+            if let Some(scroll) = scroll {
+                self.scroll(scroll, cx);
                 cx.stop_propagation();
                 return;
             }
@@ -199,19 +221,15 @@ impl TerminalView {
             return None;
         }
 
-        let origin_x = bounds.origin.x;
-        let origin_y = bounds.origin.y;
-        let rel_x: f32 = (position.x - origin_x).into();
-        let rel_y: f32 = (position.y - origin_y).into();
-        let content_x = rel_x;
-        let content_y = rel_y;
+        let rel_x: f32 = (position.x - bounds.origin.x).into();
+        let rel_y: f32 = (position.y - bounds.origin.y).into();
+        let max_col = columns.saturating_sub(1) as isize;
+        let max_row = grid.screen_lines().saturating_sub(1) as isize;
+        let column = ((rel_x / self.cell_width).floor() as isize).clamp(0, max_col) as usize;
+        let row = ((rel_y / self.cell_height).floor() as isize).clamp(0, max_row) as usize;
 
-        let max_col = (columns.saturating_sub(1)) as isize;
-        let max_line = (total_lines.saturating_sub(1)) as isize;
-
-        let column = ((content_x / self.cell_width).floor() as isize).clamp(0, max_col) as usize;
-        let line = ((content_y / self.cell_height).floor() as isize).clamp(0, max_line) as usize;
-
+        // Selections are kept in scrollback coordinates (line 0 = oldest).
+        let line = (self.viewport_start() + row).min(total_lines - 1);
         Some(CellPosition { line, column })
     }
 

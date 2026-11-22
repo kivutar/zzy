@@ -6,7 +6,7 @@
 //! so text can still be selected, as in most terminals.
 
 use super::{CellPosition, TerminalView};
-use alacritty_terminal::{grid::Dimensions, term::TermMode};
+use alacritty_terminal::{grid::Scroll, term::TermMode};
 use gpui_kit::{
     px, Context, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, ScrollEvent, Window,
@@ -124,19 +124,19 @@ impl TerminalView {
         let arrows = !report
             && !event.modifiers.shift
             && mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL);
-        if !report && !arrows {
-            self.scroll_lines_remainder = 0.0;
-            cx.notify();
-            return;
-        }
         cx.stop_propagation();
-
         let steps = self.wheel_steps(event);
         let count = steps.unsigned_abs() as usize;
         if count == 0 {
             return;
         }
         let up = steps > 0;
+
+        if !report && !arrows {
+            // Scroll the scrollback (alacritty's display offset; up = positive).
+            self.scroll(Scroll::Delta(steps), cx);
+            return;
+        }
 
         if report {
             let Some(cell) = self.viewport_cell(event.position) else {
@@ -172,10 +172,8 @@ impl TerminalView {
     /// program sees), not to the top of the scrollback.
     fn viewport_cell(&self, position: Point<Pixels>) -> Option<CellPosition> {
         let cell = self.cell_position_from_point(position)?;
-        let grid = self.term.grid();
-        let history = grid.total_lines().saturating_sub(grid.screen_lines());
         Some(CellPosition {
-            line: cell.line.saturating_sub(history),
+            line: cell.line.saturating_sub(self.viewport_start()),
             column: cell.column,
         })
     }
