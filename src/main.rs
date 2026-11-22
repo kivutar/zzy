@@ -49,6 +49,8 @@ impl Zzy {
         // on exit: closing through the title bar removes the window directly
         // (no should-close callback) and the app exits without quit hooks.
         zzy._window_subscriptions = vec![cx.observe_window_bounds(window, |zzy, window, cx| {
+            // The fullscreen button's icon follows the window state.
+            cx.notify();
             let state = window_state_of(window);
             if state == zzy.window_state {
                 return;
@@ -280,20 +282,42 @@ impl Render for Zzy {
                         .justify_between()
                         .child("zzy")
                         .child(
-                            Button::new("open-settings")
-                                .ghost()
-                                .xsmall()
-                                .icon(IconName::Settings2)
-                                .cursor(CursorStyle::PointingHand)
-                                .on_click({
-                                    let view = view.clone();
-                                    move |_, window, cx| {
-                                        view.update(cx, |zzy, cx| {
-                                            zzy.ensure_settings_tab(window, cx);
-                                            zzy.focus_selected(window, cx);
-                                        });
-                                    }
-                                }),
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("open-settings")
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(IconName::Settings2)
+                                        .tooltip(i18n::tr("tab.settings"))
+                                        .cursor(CursorStyle::PointingHand)
+                                        .on_click({
+                                            let view = view.clone();
+                                            move |_, window, cx| {
+                                                view.update(cx, |zzy, cx| {
+                                                    zzy.ensure_settings_tab(window, cx);
+                                                    zzy.focus_selected(window, cx);
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    Button::new("toggle-fullscreen")
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(if window.is_fullscreen() {
+                                            IconName::Minimize
+                                        } else {
+                                            IconName::Maximize
+                                        })
+                                        .tooltip(if window.is_fullscreen() {
+                                            i18n::tr("window.exit_fullscreen")
+                                        } else {
+                                            i18n::tr("window.fullscreen")
+                                        })
+                                        .cursor(CursorStyle::PointingHand)
+                                        .on_click(|_, window, _| window.toggle_fullscreen()),
+                                ),
                         ),
                 ),
             )

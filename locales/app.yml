@@ -139,6 +139,14 @@ choice.system_language:
   en: System
   ja: システムに合わせる
 
+# Title bar.
+window.fullscreen:
+  en: Fullscreen (F11)
+  ja: 全画面表示 (F11)
+window.exit_fullscreen:
+  en: Exit Fullscreen (F11)
+  ja: 全画面表示を終了 (F11)
+
 # Tabs and the terminal's context menu.
 tab.settings:
   en: Settings
