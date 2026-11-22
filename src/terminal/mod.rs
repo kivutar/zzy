@@ -634,8 +634,7 @@ mod tests {
         );
         ansi::Processor::<ansi::StdSyncHandler>::new().advance(&mut term, b"\x1b]11;?\x07");
 
-        let Some(TerminalMsg::Event(Event::ColorRequest(index, formatter))) =
-            rx.try_recv().ok()
+        let Some(TerminalMsg::Event(Event::ColorRequest(index, formatter))) = rx.try_recv().ok()
         else {
             panic!("expected a color request");
         };
@@ -645,7 +644,10 @@ mod tests {
         let bg = rgba_hex(theme.default_bg);
         let hex = |v: f32| format!("{:02x}", (v * 255.0).round() as u8);
         let expected = format!("rgb:{0}{0}/{1}{1}/{2}{2}", hex(bg.r), hex(bg.g), hex(bg.b));
-        assert!(reply.contains(&expected), "{reply:?} should contain {expected}");
+        assert!(
+            reply.contains(&expected),
+            "{reply:?} should contain {expected}"
+        );
     }
 
     #[test]

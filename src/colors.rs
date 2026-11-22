@@ -28,12 +28,19 @@ pub(crate) struct Palette {
 impl Palette {
     pub(crate) fn new(colors: &Colors, theme: &'static ThemeOverrides) -> Self {
         let mut palette = Self {
-            resolved: (0..COLOR_COUNT).map(|i| colors[i].map(to_rgba)).collect(),
+            resolved: vec![None; COLOR_COUNT],
             default_fg: rgba_hex(theme.default_fg),
             default_bg: rgba_hex(theme.default_bg),
             indexed: theme.indexed,
         };
         palette.apply_theme_overrides(theme);
+        // Colors a program changed (OSC 4/10/11/12, e.g. base16 shell scripts)
+        // win over the theme; alacritty leaves every other slot unset.
+        for (slot, color) in palette.resolved.iter_mut().enumerate() {
+            if let Some(rgb) = colors[slot] {
+                *color = Some(to_rgba(rgb));
+            }
+        }
         palette
     }
 
@@ -365,6 +372,20 @@ mod tests {
             flags,
             ..Cell::default()
         }
+    }
+
+    #[test]
+    fn colors_set_by_programs_win_over_the_theme() {
+        let theme = palette_for(ThemeChoice::Dracula);
+        let mut colors = Colors::default();
+        colors[ansi::NamedColor::Red] = Some(ansi::Rgb { r: 1, g: 2, b: 3 });
+        let palette = Palette::new(&colors, theme);
+
+        let red = palette.resolve(&ansi::Color::Named(ansi::NamedColor::Red));
+        assert_eq!(red, to_rgba(ansi::Rgb { r: 1, g: 2, b: 3 }));
+        // Untouched slots keep the theme.
+        let green = palette.resolve(&ansi::Color::Named(ansi::NamedColor::Green));
+        assert_eq!(green, rgba_hex(theme.indexed[2]));
     }
 
     #[test]
