@@ -5,7 +5,8 @@
 //! Elsewhere every tab is reported as `Normal`.
 
 use super::TerminalView;
-use gpui_kit::{Context, Hsla, Rgba};
+use crate::colors::rgba_hex;
+use gpui_kit::{Context, Hsla};
 use std::time::Duration;
 
 /// How often the foreground process is checked.
@@ -26,18 +27,10 @@ impl ProcessContext {
     pub fn color(self) -> Option<Hsla> {
         let hex = match self {
             Self::Normal => return None,
-            Self::Root => 0xe01b24,   // red 3
-            Self::Remote => 0x26a269, // green 4
+            Self::Root => 0xe01b24ff,   // red 3
+            Self::Remote => 0x26a269ff, // green 4
         };
-        Some(
-            Rgba {
-                r: ((hex >> 16) & 0xff) as f32 / 255.0,
-                g: ((hex >> 8) & 0xff) as f32 / 255.0,
-                b: (hex & 0xff) as f32 / 255.0,
-                a: 1.0,
-            }
-            .into(),
-        )
+        Some(rgba_hex(hex).into())
     }
 }
 

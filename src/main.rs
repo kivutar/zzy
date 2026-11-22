@@ -1,21 +1,19 @@
 mod colors;
 mod config;
 mod settings;
+mod tab_bar;
 mod terminal;
 mod theme;
 
 use colors::{theme_background, theme_foreground};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
-    h_flex,
-    tab::{Tab, TabBar},
-    v_flex, ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
+    h_flex, v_flex, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use settings::{AppSettings, NewTabDirectory, SettingsView};
-use std::{cell::Cell, rc::Rc};
-use terminal::{ProcessContext, TerminalBell, TerminalExited, TerminalView};
+use terminal::{TerminalBell, TerminalExited, TerminalView};
 
 pub struct ZedTerm {
     tabs: Vec<TabContent>,
@@ -23,10 +21,7 @@ pub struct ZedTerm {
     focus_pending: bool,
     keystroke_sub: Option<Subscription>,
     settings: AppSettings,
-    settings_dirty: bool,
     window_state: config::WindowState,
-    /// A terminal rang the bell; played from `render`, which has the window.
-    bell_pending: bool,
     _window_subscriptions: Vec<Subscription>,
     _save_window_state: Option<Task<()>>,
 }
@@ -44,9 +39,7 @@ impl ZedTerm {
             focus_pending: true,
             keystroke_sub: None,
             settings,
-            settings_dirty: false,
             window_state: window_state_of(window),
-            bell_pending: false,
             _window_subscriptions: Vec::new(),
             _save_window_state: None,
         };
@@ -88,8 +81,8 @@ impl ZedTerm {
 
             if modifiers.control && modifiers.shift && key.eq_ignore_ascii_case("t") {
                 if let Some(view) = view.upgrade() {
-                    let _ = view.update(cx, |zedterm, cx| {
-                        zedterm.add_terminal_tab(cx);
+                    view.update(cx, |zedterm, cx| {
+                        zedterm.add_terminal_tab(window, cx);
                         zedterm.focus_selected(window, cx);
                     });
                 }
@@ -97,11 +90,11 @@ impl ZedTerm {
             }
         }));
 
-        zedterm.add_terminal_tab(cx);
+        zedterm.add_terminal_tab(window, cx);
         zedterm
     }
 
-    fn add_terminal_tab(&mut self, cx: &mut Context<Self>) {
+    fn add_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = self.settings.clone();
         let cwd = self.new_tab_directory(cx);
         let terminal = cx.new(move |cx| TerminalView::new(cx, &settings, cwd));
@@ -120,9 +113,8 @@ impl ZedTerm {
             }
         })
         .detach();
-        cx.subscribe(&terminal, |zedterm, _, _: &TerminalBell, cx| {
-            zedterm.bell_pending = true;
-            cx.notify();
+        cx.subscribe_in(&terminal, window, |_, _, _: &TerminalBell, window, _| {
+            window.play_system_bell();
         })
         .detach();
         self.tabs.push(TabContent::Terminal(terminal));
@@ -151,7 +143,7 @@ impl ZedTerm {
         .filter(|_| !self.tabs.is_empty())
     }
 
-    fn ensure_settings_tab(&mut self, cx: &mut Context<Self>) {
+    fn ensure_settings_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(idx) = self
             .tabs
             .iter()
@@ -165,18 +157,14 @@ impl ZedTerm {
 
         let settings = self.settings.clone();
         let settings_view = cx.new(move |cx| SettingsView::new(cx, settings));
-        cx.observe(&settings_view, |zedterm, settings_view, cx| {
-            let settings = settings_view.read(cx).current_settings();
-            if settings.theme != zedterm.settings.theme
-                || settings.background_opacity != zedterm.settings.background_opacity
-            {
-                apply_app_theme(&settings, cx);
-            }
-            config::save_settings(&settings);
-            zedterm.settings = settings;
-            zedterm.settings_dirty = true;
-            cx.notify();
-        })
+        cx.observe_in(
+            &settings_view,
+            window,
+            |zedterm, settings_view, window, cx| {
+                let settings = settings_view.read(cx).current_settings();
+                zedterm.apply_settings(settings, window, cx);
+            },
+        )
         .detach();
 
         self.tabs.push(TabContent::Settings(settings_view));
@@ -185,21 +173,28 @@ impl ZedTerm {
         cx.notify();
     }
 
-    fn apply_settings_to_terminals(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.settings_dirty {
-            return;
+    /// Apply settings edited in the Settings tab: theme, window background and
+    /// every open terminal; then save them.
+    fn apply_settings(
+        &mut self,
+        settings: AppSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if settings.theme != self.settings.theme
+            || settings.background_opacity != self.settings.background_opacity
+        {
+            apply_app_theme(&settings, cx);
         }
-
-        window.set_background_appearance(background_appearance(&self.settings));
-
+        window.set_background_appearance(background_appearance(&settings));
         for tab in &self.tabs {
             if let TabContent::Terminal(term) = tab {
-                let settings = self.settings.clone();
-                let _ = term.update(cx, |view, cx| view.apply_settings(&settings, window, cx));
+                term.update(cx, |view, cx| view.apply_settings(&settings, window, cx));
             }
         }
-
-        self.settings_dirty = false;
+        config::save_settings(&settings);
+        self.settings = settings;
+        cx.notify();
     }
 
     fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -245,11 +240,6 @@ impl ZedTerm {
 
 impl Render for ZedTerm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.apply_settings_to_terminals(window, cx);
-        if std::mem::take(&mut self.bell_pending) {
-            window.play_system_bell();
-        }
-
         if self.tabs.is_empty() {
             return v_flex().child("No tabs");
         }
@@ -260,21 +250,10 @@ impl Render for ZedTerm {
         }
 
         let view = cx.entity();
-        let context_color = |tab: &TabContent, cx: &App| match tab {
-            TabContent::Terminal(term) => match term.read(cx).process_context() {
-                ProcessContext::Root if self.settings.tint_root => ProcessContext::Root.color(),
-                ProcessContext::Remote if self.settings.tint_ssh => ProcessContext::Remote.color(),
-                _ => None,
-            },
-            TabContent::Settings(_) => None,
-        };
         // Tint the window background for the selected tab while it runs as root
         // (red) or over SSH (green). Painted under all content, on top of Root's
         // background; default-colored terminal cells don't paint, so it shows through.
-        let window_tint = context_color(&self.tabs[self.selected_index], cx);
-        let border_color = cx.theme().border;
-        let active_left: Rc<Cell<Option<Pixels>>> = Rc::default();
-        let active_right: Rc<Cell<Option<Pixels>>> = Rc::default();
+        let window_tint = self.context_color(&self.tabs[self.selected_index], cx);
         let header = v_flex()
             .w_full()
             .child(
@@ -296,8 +275,8 @@ impl Render for ZedTerm {
                                 .on_click({
                                     let view = view.clone();
                                     move |_, window, cx| {
-                                        let _ = view.update(cx, |zedterm, cx| {
-                                            zedterm.ensure_settings_tab(cx);
+                                        view.update(cx, |zedterm, cx| {
+                                            zedterm.ensure_settings_tab(window, cx);
                                             zedterm.focus_selected(window, cx);
                                         });
                                     }
@@ -305,164 +284,7 @@ impl Render for ZedTerm {
                         ),
                 ),
             )
-            // Connected active tab: gpui-kit draws a full-width line under the tab
-            // bar and expects an opaque active tab to cover it, which would break
-            // translucency. Instead the bar is clipped 1px short (hiding its line)
-            // and we draw the line ourselves, leaving a gap under the active tab.
-            .child(
-                div().h(px(TAB_HEIGHT - 1.)).overflow_hidden().child(
-                    TabBar::new("tabs")
-                        .w_full()
-                        .flex_shrink_0()
-                        .selected_index(self.selected_index)
-                        .on_click({
-                            let view = view.clone();
-                            move |selected_index, window, cx| {
-                                let view = view.clone();
-                                let _ = view.update(cx, |zedterm, cx| {
-                                    zedterm.select_tab(*selected_index, cx);
-                                    zedterm.focus_selected(window, cx);
-                                });
-                            }
-                        })
-                        .suffix({
-                            let view = view.clone();
-                            Button::new("add-tab")
-                                .ghost()
-                                .xsmall()
-                                .mr_2()
-                                .icon(IconName::Plus)
-                                .cursor(CursorStyle::PointingHand)
-                                .tab_stop(false)
-                                .on_click(move |_, window, cx| {
-                                    let view = view.clone();
-                                    let _ = view.update(cx, |zedterm, cx| {
-                                        zedterm.add_terminal_tab(cx);
-                                        zedterm.focus_selected(window, cx);
-                                    });
-                                })
-                        })
-                        .children(self.tabs.iter().enumerate().map(|(index, tab)| {
-                            let close_view = view.clone();
-                            let (label, icon) = match tab {
-                                TabContent::Terminal(term) => {
-                                    (term.read(cx).tab_title(), IconName::SquareTerminal)
-                                }
-                                TabContent::Settings(_) => {
-                                    ("Settings".to_string(), IconName::Settings2)
-                                }
-                            };
-                            // Background tabs keep their own context color on the icon.
-                            let icon = Icon::new(icon)
-                                .when_some(context_color(tab, cx), |icon, color| {
-                                    icon.text_color(color)
-                                });
-                            // The active tab reports its outer edges (content edge plus
-                            // our padding and gpui-kit's 1px side border) so the line
-                            // under the tab bar can leave a gap there. Recorded during
-                            // prepaint, read when the line paints later in the frame.
-                            let selected = index == self.selected_index;
-                            let measure = |cell: &Rc<Cell<Option<Pixels>>>, right_edge: bool| {
-                                let cell = cell.clone();
-                                canvas(
-                                    move |bounds, _, _| {
-                                        let outset = px(TAB_PADDING_X + 1.);
-                                        cell.set(Some(if right_edge {
-                                            bounds.right() + outset
-                                        } else {
-                                            bounds.left() - outset
-                                        }));
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .absolute()
-                                .size_full()
-                            };
-                            let icon = div()
-                                .child(icon)
-                                .when(selected, |this| this.child(measure(&active_left, false)));
-                            // gpui-kit paints inactive tab borders transparent and its
-                            // state styles override ours, so draw a 1px separator on the
-                            // tab's right edge ourselves, inside the suffix (tab children
-                            // go into a clipped inner box). Taffy positions absolute
-                            // elements against their direct parent, so the suffix box is
-                            // made as tall as the tab (`TAB_HEIGHT`) and the line
-                            // reaches past our `TAB_PADDING_X` padding
-                            // to the tab edge. Skipped next to the selected tab, whose
-                            // own border already separates it.
-                            let separator =
-                                index != self.selected_index && index + 1 != self.selected_index;
-                            let close_button = Button::new(("close-tab", index as u32))
-                                .ghost()
-                                .xsmall()
-                                .icon(IconName::Close)
-                                .cursor(CursorStyle::PointingHand)
-                                .tab_stop(false)
-                                .on_click(move |_, window, cx| {
-                                    cx.stop_propagation();
-                                    let view = close_view.clone();
-                                    let _ = view.update(cx, |zedterm, cx| {
-                                        zedterm.close_tab(index, cx);
-                                        zedterm.focus_selected(window, cx);
-                                    });
-                                });
-                            Tab::new()
-                                .prefix(icon)
-                                .label(label)
-                                .px(px(TAB_PADDING_X))
-                                .cursor(CursorStyle::PointingHand)
-                                .suffix(
-                                    h_flex()
-                                        .h(px(TAB_HEIGHT))
-                                        .child(close_button)
-                                        .when(selected, |this| {
-                                            this.child(measure(&active_right, true))
-                                        })
-                                        .when(separator, |this| {
-                                            this.child(
-                                                div()
-                                                    .absolute()
-                                                    .top_0()
-                                                    .bottom_0()
-                                                    .right(px(-TAB_PADDING_X))
-                                                    .w(px(1.))
-                                                    .bg(border_color),
-                                            )
-                                        }),
-                                )
-                        })),
-                ),
-            )
-            .child(
-                canvas(
-                    |_, _, _| {},
-                    move |bounds, _, window, _| {
-                        let (left, right) = (bounds.left(), bounds.right());
-                        let segments = match (active_left.get(), active_right.get()) {
-                            // Each segment also covers the active tab's 1px side
-                            // border column, closing the corner where they meet.
-                            (Some(gap_start), Some(gap_end)) => vec![
-                                (left, (gap_start + px(1.)).clamp(left, right)),
-                                ((gap_end - px(1.)).clamp(left, right), right),
-                            ],
-                            _ => vec![(left, right)],
-                        };
-                        for (start, end) in segments {
-                            if end > start {
-                                window.paint_quad(fill(
-                                    Bounds::new(
-                                        point(start, bounds.top()),
-                                        size(end - start, px(1.)),
-                                    ),
-                                    border_color,
-                                ));
-                            }
-                        }
-                    },
-                )
-                .w_full()
-                .h(px(1.)),
-            );
+            .child(self.render_tab_bar(cx));
 
         v_flex()
             .size_full()
@@ -530,14 +352,9 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
         theme.title_bar_border = border;
         theme.window_border = border;
         theme.table_row_border = border;
-        theme.mono_font_family = "Adwaita Mono".into();
+        theme.mono_font_family = settings::DEFAULT_FONT_FAMILY.into();
     });
 }
-
-/// gpui-kit's default `TabVariant::Tab` height and our horizontal tab padding,
-/// used to place the inactive-tab separator on the tab's edge.
-const TAB_HEIGHT: f32 = 32.0;
-const TAB_PADDING_X: f32 = 8.0;
 
 const WINDOW_STATE_SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 

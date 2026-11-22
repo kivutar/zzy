@@ -11,6 +11,14 @@ use std::{
     thread,
 };
 
+/// A spawned PTY: its master side, writer, reader and the child process.
+type OpenPty = (
+    Box<dyn MasterPty + Send>,
+    Box<dyn Write + Send>,
+    Box<dyn Read + Send>,
+    Box<dyn Child + Send + Sync>,
+);
+
 impl TerminalView {
     pub(crate) fn start_pty(
         &mut self,
@@ -21,7 +29,7 @@ impl TerminalView {
             Ok((master, writer, reader, child)) => {
                 self.master = Some(master);
                 self.writer = Some(Arc::new(parking_lot::Mutex::new(writer)));
-                self._child = Some(child);
+                self.child = Some(child);
                 self.spawn_reader_thread(reader, tx);
                 cx.notify();
             }
@@ -32,14 +40,7 @@ impl TerminalView {
         }
     }
 
-    fn open_pty(
-        &self,
-    ) -> anyhow::Result<(
-        Box<dyn MasterPty + Send>,
-        Box<dyn Write + Send>,
-        Box<dyn Read + Send>,
-        Box<dyn Child + Send + Sync>,
-    )> {
+    fn open_pty(&self) -> anyhow::Result<OpenPty> {
         let pty_system = native_pty_system();
         let size = PtySize {
             rows: self.rows as u16,

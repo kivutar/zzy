@@ -28,21 +28,25 @@ pub const DEFAULT_CELL_HEIGHT: f32 = 24.0;
 pub const DEFAULT_FONT_SIZE: f32 = 15.0;
 
 impl TerminalView {
-    pub(crate) fn buffer_segments(&self) -> BufferSnapshot {
-        let (start_line, end_line) = self.visible_line_range().unwrap_or_else(|| {
-            let total = self.term.grid().total_lines();
-            (0, total)
-        });
+    /// `pinned_to_bottom`: a scroll to the bottom is pending, so use the bottom
+    /// of the buffer instead of the (not yet updated) scroll offset.
+    pub(crate) fn buffer_segments(&self, pinned_to_bottom: bool) -> BufferSnapshot {
+        let (start_line, end_line) =
+            self.visible_line_range(pinned_to_bottom)
+                .unwrap_or_else(|| {
+                    let total = self.term.grid().total_lines();
+                    (0, total)
+                });
         Self::buffer_segments_for_term(
             &self.term,
-            self.theme,
-            self.bold_text.bright_colors(),
+            self.settings.theme,
+            self.settings.bold_text.bright_colors(),
             start_line,
             end_line,
         )
     }
 
-    fn visible_line_range(&self) -> Option<(usize, usize)> {
+    fn visible_line_range(&self, pinned_to_bottom: bool) -> Option<(usize, usize)> {
         let bounds = self.last_bounds?;
         let grid_ref = self.term.grid();
         let total_lines = grid_ref.total_lines();
@@ -58,14 +62,19 @@ impl TerminalView {
 
         let max_visible = (viewport_height / cell_height).ceil() as usize;
         let overscan = 8usize;
-        let offset = self.scroll_handle.offset();
-        let max_offset = self.scroll_handle.max_offset();
-        let mut offset_y: f32 = (-offset.y).into();
-        offset_y = offset_y.max(0.0);
-        let max_scroll_y: f32 = max_offset.y.into();
-        if max_scroll_y > f32::EPSILON {
-            offset_y = offset_y.min(max_scroll_y);
-        }
+        let offset_y = if pinned_to_bottom {
+            (total_lines as f32 * cell_height - viewport_height).max(0.0)
+        } else {
+            let offset = self.scroll_handle.offset();
+            let max_offset = self.scroll_handle.max_offset();
+            let mut offset_y: f32 = (-offset.y).into();
+            offset_y = offset_y.max(0.0);
+            let max_scroll_y: f32 = max_offset.y.into();
+            if max_scroll_y > f32::EPSILON {
+                offset_y = offset_y.min(max_scroll_y);
+            }
+            offset_y
+        };
 
         let mut start_line = (offset_y / cell_height).floor() as usize;
         if start_line > total_lines {
@@ -202,7 +211,8 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_cell_metrics(window, cx);
 
-        let buffer = self.buffer_segments();
+        let pinned_to_bottom = std::mem::take(&mut self.scroll_to_bottom_pending);
+        let buffer = self.buffer_segments(pinned_to_bottom);
         let palette = buffer.palette;
         let cursor_shape = buffer.cursor_shape;
         let block_cursor = matches!(
@@ -258,7 +268,7 @@ impl Render for TerminalView {
                     (seg.fg, seg.bg)
                 };
                 div()
-                    .when(seg.is_bold && self.bold_text.bold_font(), |this| {
+                    .when(seg.is_bold && self.settings.bold_text.bold_font(), |this| {
                         this.font_weight(FontWeight::BOLD)
                     })
                     .text_color(fg)
@@ -301,7 +311,7 @@ impl Render for TerminalView {
         let scroll_area = div()
             .id("terminal-scroll")
             .size_full()
-            .font_family(self.font_family.clone())
+            .font_family(self.settings.font_family.clone())
             .text_size(px(self.font_size))
             .line_height(px(cell_height))
             .whitespace_nowrap()
@@ -343,7 +353,7 @@ impl Render for TerminalView {
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .child(scroll_area)
-            .children(self.render_scrollbar(cx))
+            .children(self.render_scrollbar(pinned_to_bottom, cx))
             .when(self.bell_flash_visible(), |this| {
                 this.child(
                     div()
@@ -405,10 +415,14 @@ impl Render for TerminalView {
 }
 
 impl TerminalView {
-    fn render_scrollbar(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+    fn render_scrollbar(
+        &self,
+        pinned_to_bottom: bool,
+        cx: &Context<Self>,
+    ) -> Option<impl IntoElement> {
         let viewport_height: f32 = self.last_bounds?.size.height.into();
         let scroll_max: f32 = self.scroll_handle.max_offset().y.into();
-        match self.scrollbar {
+        match self.settings.scrollbar {
             ScrollbarVisibility::Never => return None,
             ScrollbarVisibility::Auto if scroll_max <= 0.5 || viewport_height <= 0.5 => {
                 return None
@@ -421,7 +435,9 @@ impl TerminalView {
             (viewport_height / content_height * viewport_height).clamp(20.0, viewport_height);
         let track_height = (viewport_height - thumb_height).max(0.0);
         let offset_y: f32 = (-self.scroll_handle.offset().y).into();
-        let progress = if scroll_max < f32::EPSILON {
+        let progress = if pinned_to_bottom {
+            1.0
+        } else if scroll_max < f32::EPSILON {
             0.0
         } else {
             (offset_y / scroll_max).clamp(0.0, 1.0)
@@ -430,7 +446,7 @@ impl TerminalView {
         Some(
             div()
                 .absolute()
-                .right(px(-self.padding.min(4.0)))
+                .right(px(-self.settings.padding.min(4.0)))
                 .top(px(progress * track_height))
                 .w(px(8.0))
                 .h(px(thumb_height))
@@ -450,8 +466,10 @@ mod tests {
 
     #[test]
     fn renders_tabs_as_spaces() {
-        let mut config = Config::default();
-        config.scrolling_history = 10;
+        let config = Config {
+            scrolling_history: 10,
+            ..Config::default()
+        };
 
         let (tx, _rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx };
@@ -481,8 +499,10 @@ mod tests {
         let lines = 10_000;
         let cols = 120;
 
-        let mut config = Config::default();
-        config.scrolling_history = lines;
+        let config = Config {
+            scrolling_history: lines,
+            ..Config::default()
+        };
 
         let (tx, _rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx };

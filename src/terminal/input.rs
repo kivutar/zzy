@@ -2,7 +2,7 @@ use super::{CellPosition, SelectionRange, TerminalView};
 use alacritty_terminal::{
     grid::Dimensions,
     index::{Column, Line},
-    term::{cell::Flags, TermMode},
+    term::{cell::Flags, Term, TermMode},
 };
 use gpui_kit::{
     ClipboardItem, Context, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -153,10 +153,11 @@ impl TerminalView {
         }
 
         self.is_selecting = false;
-        if self.selection_started_with_single_click && !self.selection_dragged {
-            if self.clear_selection() {
-                cx.notify();
-            }
+        if self.selection_started_with_single_click
+            && !self.selection_dragged
+            && self.clear_selection()
+        {
+            cx.notify();
         }
         self.selection_started_with_single_click = false;
         self.selection_dragged = false;
@@ -177,17 +178,8 @@ impl TerminalView {
             if let Some(text) = item.text() {
                 self.cursor_visible = true;
                 self.scroll_to_bottom_for_input(cx);
-                // Shells execute on CR, not LF; bracketed paste lets them tell
-                // pasted text from typed text so multi-line pastes don't run.
-                let text = text.replace("\r\n", "\r").replace('\n', "\r");
-                if self.term.mode().contains(TermMode::BRACKETED_PASTE) {
-                    let text = text.replace("\x1b[201~", "");
-                    self.write_bytes(b"\x1b[200~");
-                    self.write_bytes(text.as_bytes());
-                    self.write_bytes(b"\x1b[201~");
-                } else {
-                    self.write_bytes(text.as_bytes());
-                }
+                let bracketed = self.term.mode().contains(TermMode::BRACKETED_PASTE);
+                self.write_bytes(&paste_bytes(&text, bracketed));
                 return true;
             }
         }
@@ -284,69 +276,7 @@ impl TerminalView {
 
     pub(crate) fn selected_text(&self) -> Option<String> {
         let selection = self.selection_range()?;
-        let grid_ref = self.term.grid();
-        let columns = grid_ref.columns();
-        let total_lines = grid_ref.total_lines();
-        if columns == 0 || total_lines == 0 {
-            return None;
-        }
-        let screen_lines = grid_ref.screen_lines();
-        let history_size = total_lines.saturating_sub(screen_lines);
-
-        let mut text = String::new();
-        for line_idx in selection.start.line..=selection.end.line {
-            let grid_line = Line(line_idx as i32 - history_size as i32);
-            let line_start_col = if line_idx == selection.start.line {
-                selection.start.column
-            } else {
-                0
-            };
-            let line_end_col = if line_idx == selection.end.line {
-                selection.end.column
-            } else {
-                columns.saturating_sub(1)
-            };
-
-            if line_end_col < line_start_col {
-                continue;
-            }
-
-            let mut line = String::new();
-            for col_idx in line_start_col..=line_end_col {
-                let cell = &grid_ref[grid_line][Column(col_idx)];
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    line.push(' ');
-                    continue;
-                }
-
-                let mut ch = cell.c;
-                if ch == '\t' {
-                    ch = ' ';
-                }
-                line.push(ch);
-                if let Some(extra) = cell.zerowidth() {
-                    for c in extra {
-                        line.push(*c);
-                    }
-                }
-            }
-
-            // Soft-wrapped lines are one logical line: join them unchanged.
-            let wrapped = line_idx < selection.end.line
-                && grid_ref[grid_line][Column(columns - 1)]
-                    .flags
-                    .contains(Flags::WRAPLINE);
-            if wrapped {
-                text.push_str(&line);
-            } else {
-                text.push_str(line.trim_end());
-                if line_idx < selection.end.line {
-                    text.push('\n');
-                }
-            }
-        }
-
-        Some(text)
+        text_in_range(&self.term, selection)
     }
 
     pub(crate) fn clear_selection(&mut self) -> bool {
@@ -459,6 +389,88 @@ impl TerminalView {
     }
 }
 
+/// The text in `selection`: trailing blanks trimmed per line, soft-wrapped
+/// lines joined back into one, tabs as spaces.
+fn text_in_range<T>(term: &Term<T>, selection: SelectionRange) -> Option<String> {
+    let grid_ref = term.grid();
+    let columns = grid_ref.columns();
+    let total_lines = grid_ref.total_lines();
+    if columns == 0 || total_lines == 0 {
+        return None;
+    }
+    let screen_lines = grid_ref.screen_lines();
+    let history_size = total_lines.saturating_sub(screen_lines);
+
+    let mut text = String::new();
+    for line_idx in selection.start.line..=selection.end.line {
+        let grid_line = Line(line_idx as i32 - history_size as i32);
+        let line_start_col = if line_idx == selection.start.line {
+            selection.start.column
+        } else {
+            0
+        };
+        let line_end_col = if line_idx == selection.end.line {
+            selection.end.column
+        } else {
+            columns.saturating_sub(1)
+        };
+
+        if line_end_col < line_start_col {
+            continue;
+        }
+
+        let mut line = String::new();
+        for col_idx in line_start_col..=line_end_col {
+            let cell = &grid_ref[grid_line][Column(col_idx)];
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                line.push(' ');
+                continue;
+            }
+
+            let mut ch = cell.c;
+            if ch == '\t' {
+                ch = ' ';
+            }
+            line.push(ch);
+            if let Some(extra) = cell.zerowidth() {
+                for c in extra {
+                    line.push(*c);
+                }
+            }
+        }
+
+        // Soft-wrapped lines are one logical line: join them unchanged.
+        let wrapped = line_idx < selection.end.line
+            && grid_ref[grid_line][Column(columns - 1)]
+                .flags
+                .contains(Flags::WRAPLINE);
+        if wrapped {
+            text.push_str(&line);
+        } else {
+            text.push_str(line.trim_end());
+            if line_idx < selection.end.line {
+                text.push('\n');
+            }
+        }
+    }
+
+    Some(text)
+}
+
+/// What to send to the PTY for a paste. Shells execute on CR, not LF, so line
+/// breaks become CR; with bracketed paste (enabled by the shell) the text is
+/// wrapped so a multi-line paste isn't executed line by line. An embedded end
+/// marker is stripped so the pasted text can't end the bracket early.
+fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
+    let text = text.replace("\r\n", "\r").replace('\n', "\r");
+    if bracketed {
+        let text = text.replace("\x1b[201~", "");
+        [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
+    } else {
+        text.into_bytes()
+    }
+}
+
 fn keystroke_to_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
     let mods = &keystroke.modifiers;
     let mut bytes = if let Some(text) = keystroke.key_char.as_ref().filter(|_| !mods.control) {
@@ -507,8 +519,75 @@ fn keystroke_to_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>
 
 #[cfg(test)]
 mod tests {
-    use super::keystroke_to_bytes;
+    use super::super::{CellPosition, SelectionRange, SimpleDimensions, TerminalEventProxy};
+    use super::{keystroke_to_bytes, paste_bytes, text_in_range};
+    use alacritty_terminal::{
+        term::{Config, Term},
+        vte::ansi,
+    };
+    use futures::channel::mpsc;
     use gpui_kit::Keystroke;
+
+    /// A 10-column, 4-line terminal fed with `input`.
+    fn term_with(input: &str) -> Term<TerminalEventProxy> {
+        let (tx, _rx) = mpsc::unbounded();
+        let mut term = Term::new(
+            Config::default(),
+            &SimpleDimensions::new(10, 4),
+            TerminalEventProxy { tx },
+        );
+        ansi::Processor::<ansi::StdSyncHandler>::new().advance(&mut term, input.as_bytes());
+        term
+    }
+
+    fn lines(start: usize, end: usize) -> SelectionRange {
+        SelectionRange {
+            start: CellPosition {
+                line: start,
+                column: 0,
+            },
+            end: CellPosition {
+                line: end,
+                column: 9,
+            },
+        }
+    }
+
+    #[test]
+    fn copies_soft_wrapped_lines_as_one() {
+        let term = term_with("hello world foo");
+        assert_eq!(
+            text_in_range(&term, lines(0, 1)).unwrap(),
+            "hello world foo"
+        );
+    }
+
+    #[test]
+    fn copies_hard_line_breaks_and_trims_trailing_blanks() {
+        let term = term_with("ab  \r\ncd");
+        assert_eq!(text_in_range(&term, lines(0, 1)).unwrap(), "ab\ncd");
+    }
+
+    #[test]
+    fn copies_partial_line() {
+        let term = term_with("hello");
+        let range = SelectionRange {
+            start: CellPosition { line: 0, column: 1 },
+            end: CellPosition { line: 0, column: 3 },
+        };
+        assert_eq!(text_in_range(&term, range).unwrap(), "ell");
+    }
+
+    #[test]
+    fn paste_converts_newlines_and_brackets() {
+        assert_eq!(paste_bytes("a\nb\r\nc", false), b"a\rb\rc");
+        assert_eq!(paste_bytes("ls\n", true), b"\x1b[200~ls\r\x1b[201~");
+        // An embedded end marker can't close the bracket early.
+        assert_eq!(
+            paste_bytes("x\x1b[201~rm -rf ~\n", true),
+            b"\x1b[200~xrm -rf ~\r\x1b[201~"
+        );
+    }
 
     fn bytes(keys: &'static str, app_cursor: bool) -> Option<Vec<u8>> {
         keystroke_to_bytes(&Keystroke::parse(keys).unwrap(), app_cursor)

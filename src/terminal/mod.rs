@@ -5,10 +5,7 @@ mod pty;
 mod render;
 
 use crate::colors::Palette;
-use crate::settings::{
-    AppSettings, BellMode, BoldText, CursorShapeSetting, ScrollbarVisibility, FONT_SIZE_RANGE,
-};
-use crate::theme::ThemeChoice;
+use crate::settings::{AppSettings, BellMode, CursorShapeSetting, FONT_SIZE_RANGE};
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
     grid::Dimensions,
@@ -37,20 +34,22 @@ pub struct TerminalView {
     term: Term<TerminalEventProxy>,
     master: Option<Box<dyn MasterPty + Send>>,
     writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
-    _child: Option<Box<dyn Child + Send + Sync>>,
+    child: Option<Box<dyn Child + Send + Sync>>,
     rows: usize,
     cols: usize,
-    /// Effective font size: the setting plus this tab's zoom.
+    /// The settings this terminal currently follows (see `apply_settings`).
+    settings: AppSettings,
+    /// Effective font size: `settings.font_size` plus this tab's zoom.
     font_size: f32,
-    /// Font size from the settings, before zoom.
-    base_font_size: f32,
     /// Per-tab zoom offset in points (Ctrl+=/-/0, Ctrl+scroll); not saved.
     zoom: f32,
-    font_family: SharedString,
-    line_height: f32,
     cell_width: f32,
     cell_height: f32,
     scroll_handle: ScrollHandle,
+    /// `ScrollHandle::scroll_to_bottom` only moves the offset during the next
+    /// layout, after `render` has already picked the visible lines from the old
+    /// offset. While this is set, `render` shows the bottom directly.
+    scroll_to_bottom_pending: bool,
     program_name: String,
     /// Program and arguments to run in the PTY.
     argv: Vec<String>,
@@ -72,20 +71,11 @@ pub struct TerminalView {
     last_mouse_cell: Option<CellPosition>,
     /// Fractional wheel lines carried over between (trackpad) scroll events.
     scroll_lines_remainder: f32,
-    cursor_blink_enabled: bool,
-    bold_text: BoldText,
-    /// Padding around the view; the scrollbar thumb sits in this gutter.
-    padding: f32,
-    bell: BellMode,
-    ignore_program_title: bool,
     /// Root / SSH state of the foreground program, polled (see `context.rs`).
     process_context: ProcessContext,
     last_bell: Option<Instant>,
     /// The visual bell is shown until this instant.
     flash_until: Option<Instant>,
-    config: Config,
-    scrollbar: ScrollbarVisibility,
-    theme: ThemeChoice,
 }
 
 #[derive(Clone)]
@@ -178,12 +168,11 @@ impl TerminalView {
         let proxy = TerminalEventProxy { tx: tx.clone() };
         let config = config_from_settings(settings);
         let term = Term::new(
-            config.clone(),
+            config,
             &SimpleDimensions::new(render::DEFAULT_COLS, render::DEFAULT_ROWS),
             proxy,
         );
         let font_size: f32 = settings.font_size;
-        let font_family = settings.font_family.clone();
         let scroll_handle = ScrollHandle::new();
         let (argv, error) = match pty::command_argv(settings) {
             Ok(argv) => (argv, None),
@@ -205,17 +194,16 @@ impl TerminalView {
             term,
             master: None,
             writer: None,
-            _child: None,
+            child: None,
             rows: render::DEFAULT_ROWS,
             cols: render::DEFAULT_COLS,
+            settings: settings.clone(),
             font_size,
-            base_font_size: font_size,
             zoom: 0.0,
-            font_family,
-            line_height: settings.line_height,
             cell_width: render::DEFAULT_CELL_WIDTH,
             cell_height: render::DEFAULT_CELL_HEIGHT,
             scroll_handle,
+            scroll_to_bottom_pending: false,
             program_name,
             argv,
             cwd,
@@ -233,24 +221,15 @@ impl TerminalView {
             mouse_button_down: None,
             last_mouse_cell: None,
             scroll_lines_remainder: 0.0,
-            cursor_blink_enabled: settings.cursor_blink,
-            bold_text: settings.bold_text,
-            padding: settings.padding,
-            bell: settings.bell,
-            ignore_program_title: settings.ignore_program_title,
             process_context: ProcessContext::Normal,
             last_bell: None,
             flash_until: None,
-            config,
-            scrollbar: settings.scrollbar,
-            theme: settings.theme,
         };
 
         view.install_tab_passthrough(cx);
         view.spawn_message_loop(rx, cx);
         view.start_pty(tx, cx);
         view.start_cursor_blink(cx);
-        view.start_scroll_invalidation(cx);
         view.start_context_polling(cx);
         view
     }
@@ -265,7 +244,7 @@ impl TerminalView {
                     .is_some_and(|focused| focused.contains(&focus, window))
             {
                 if let Some(entity) = weak.upgrade() {
-                    let _ = entity.update(cx, |view, cx| {
+                    entity.update(cx, |view, cx| {
                         view.cursor_visible = true;
                         view.scroll_to_bottom_for_input(cx);
                         if event.keystroke.modifiers.shift {
@@ -283,11 +262,12 @@ impl TerminalView {
     fn handle_msg(&mut self, msg: TerminalMsg, cx: &mut Context<Self>) {
         match msg {
             TerminalMsg::Output(bytes) => {
-                let stick_to_bottom = self.is_scrolled_to_bottom();
+                // The offset is stale while a scroll to the bottom is pending.
+                let stick_to_bottom = self.scroll_to_bottom_pending || self.is_scrolled_to_bottom();
                 self.parser.advance(&mut self.term, &bytes);
                 self.cursor_visible = true;
                 if stick_to_bottom {
-                    self.scroll_handle.scroll_to_bottom();
+                    self.scroll_to_bottom();
                 }
                 cx.notify();
             }
@@ -321,7 +301,7 @@ impl TerminalView {
 
     fn ring_bell(&mut self, cx: &mut Context<Self>) {
         let now = Instant::now();
-        if self.bell == BellMode::Off
+        if self.settings.bell == BellMode::Off
             || self
                 .last_bell
                 .is_some_and(|last| now.duration_since(last) < BELL_MIN_INTERVAL)
@@ -330,10 +310,10 @@ impl TerminalView {
         }
         self.last_bell = Some(now);
 
-        if self.bell.sound() {
+        if self.settings.bell.sound() {
             cx.emit(TerminalBell);
         }
-        if self.bell.flash() {
+        if self.settings.bell.flash() {
             self.flash_until = Some(now + BELL_FLASH_DURATION);
             cx.notify();
             cx.spawn(async move |view, cx| {
@@ -354,38 +334,13 @@ impl TerminalView {
                 .timer(Duration::from_millis(530))
                 .await;
             let alive = view.update(cx, |view, cx| {
-                if view.cursor_blink_enabled {
+                if view.settings.cursor_blink {
                     view.cursor_visible = !view.cursor_visible;
                     cx.notify();
                 }
             });
             if alive.is_err() {
                 break;
-            }
-        })
-        .detach();
-    }
-
-    /// We virtualize the terminal buffer and `ScrollHandle::scroll_to_bottom`
-    /// only lands on the next layout, so poll the offset and re-render when it
-    /// moves to keep the visible slice in sync.
-    fn start_scroll_invalidation(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |view, cx| {
-            let mut last_offset = None;
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
-                let alive = view.update(cx, |view, cx| {
-                    let offset = view.scroll_handle.offset();
-                    if last_offset != Some(offset) {
-                        last_offset = Some(offset);
-                        cx.notify();
-                    }
-                });
-                if alive.is_err() {
-                    break;
-                }
             }
         })
         .detach();
@@ -399,7 +354,7 @@ impl TerminalView {
         let text: SharedString = "W".into();
         let runs = vec![TextRun {
             len: text.len(),
-            font: font(self.font_family.clone()),
+            font: font(self.settings.font_family.clone()),
             color: Hsla::default(),
             background_color: None,
             underline: None,
@@ -421,7 +376,7 @@ impl TerminalView {
                     self.cell_width = measured_width;
                 }
                 if measured_height > 0.0 {
-                    self.cell_height = measured_height * self.line_height;
+                    self.cell_height = measured_height * self.settings.line_height;
                 }
 
                 self.cell_metrics_measured = true;
@@ -489,15 +444,20 @@ impl TerminalView {
         (offset_y - max_y).abs() < 1.0 || offset_y < max_y
     }
 
-    fn scroll_to_bottom_for_input(&mut self, cx: &mut Context<Self>) {
+    fn scroll_to_bottom(&mut self) {
         self.scroll_handle.scroll_to_bottom();
+        self.scroll_to_bottom_pending = true;
+    }
+
+    fn scroll_to_bottom_for_input(&mut self, cx: &mut Context<Self>) {
+        self.scroll_to_bottom();
         cx.notify();
     }
 
     /// The shell's current directory (Linux: `/proc/<pid>/cwd`), used to
     /// open new tabs in the same place.
     pub fn current_dir(&self) -> Option<PathBuf> {
-        let pid = self._child.as_ref()?.process_id()?;
+        let pid = self.child.as_ref()?.process_id()?;
         std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
     }
 
@@ -505,7 +465,7 @@ impl TerminalView {
         let program = self
             .title
             .as_deref()
-            .filter(|s| !s.is_empty() && !self.ignore_program_title)
+            .filter(|s| !s.is_empty() && !self.settings.ignore_program_title)
             .unwrap_or(&self.program_name);
         program.to_string()
     }
@@ -518,7 +478,7 @@ impl TerminalView {
         } else {
             // Keep the offset within what the font size can reach, so zooming
             // back doesn't first have to "unwind" clamped steps.
-            (self.zoom + steps).clamp(min - self.base_font_size, max - self.base_font_size)
+            (self.zoom + steps).clamp(min - self.settings.font_size, max - self.settings.font_size)
         };
         self.refresh_font(window, cx);
     }
@@ -526,7 +486,7 @@ impl TerminalView {
     /// Re-measure cells after a font change and resize the PTY to match.
     fn refresh_font(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (min, max) = (FONT_SIZE_RANGE.0 as f32, FONT_SIZE_RANGE.1 as f32);
-        self.font_size = (self.base_font_size + self.zoom).clamp(min, max);
+        self.font_size = (self.settings.font_size + self.zoom).clamp(min, max);
         self.cell_metrics_measured = false;
         self.update_cell_metrics(window, cx);
         if let Some(bounds) = self.last_bounds {
@@ -541,37 +501,29 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.base_font_size != settings.font_size
-            || self.font_family != settings.font_family
-            || self.line_height != settings.line_height
+        let old = std::mem::replace(&mut self.settings, settings.clone());
+
+        if old.font_size != settings.font_size
+            || old.font_family != settings.font_family
+            || old.line_height != settings.line_height
         {
-            self.base_font_size = settings.font_size;
-            self.font_family = settings.font_family.clone();
-            self.line_height = settings.line_height;
             self.refresh_font(window, cx);
         }
 
-        self.cursor_blink_enabled = settings.cursor_blink;
-        if !self.cursor_blink_enabled {
+        if !settings.cursor_blink {
             self.cursor_visible = true;
         }
 
         // The configured cursor is the terminal's *default* style: programs can
         // still override it (DECSCUSR) and resetting goes back to this one.
         let config = config_from_settings(settings);
-        if config.scrolling_history != self.config.scrolling_history
-            || config.default_cursor_style != self.config.default_cursor_style
+        let old_config = config_from_settings(&old);
+        if config.scrolling_history != old_config.scrolling_history
+            || config.default_cursor_style != old_config.default_cursor_style
         {
-            self.term.set_options(config.clone());
-            self.config = config;
+            self.term.set_options(config);
         }
 
-        self.bold_text = settings.bold_text;
-        self.padding = settings.padding;
-        self.bell = settings.bell;
-        self.ignore_program_title = settings.ignore_program_title;
-        self.scrollbar = settings.scrollbar;
-        self.theme = settings.theme;
         cx.notify();
     }
 }
@@ -585,6 +537,25 @@ impl Focusable for TerminalView {
 impl EventListener for TerminalEventProxy {
     fn send_event(&self, event: Event) {
         let _ = self.tx.unbounded_send(TerminalMsg::Event(event));
+    }
+}
+
+fn config_from_settings(settings: &AppSettings) -> Config {
+    Config {
+        scrolling_history: settings.scrollback,
+        default_cursor_style: ansi::CursorStyle {
+            shape: cursor_shape_from_settings(settings),
+            blinking: settings.cursor_blink,
+        },
+        ..Config::default()
+    }
+}
+
+fn cursor_shape_from_settings(settings: &AppSettings) -> ansi::CursorShape {
+    match settings.cursor_shape {
+        CursorShapeSetting::Beam => ansi::CursorShape::Beam,
+        CursorShapeSetting::Underline => ansi::CursorShape::Underline,
+        _ => ansi::CursorShape::Block,
     }
 }
 
@@ -656,24 +627,5 @@ mod tests {
             }),
             ansi::CursorShape::Underline
         );
-    }
-}
-
-fn config_from_settings(settings: &AppSettings) -> Config {
-    Config {
-        scrolling_history: settings.scrollback,
-        default_cursor_style: ansi::CursorStyle {
-            shape: cursor_shape_from_settings(settings),
-            blinking: settings.cursor_blink,
-        },
-        ..Config::default()
-    }
-}
-
-fn cursor_shape_from_settings(settings: &AppSettings) -> ansi::CursorShape {
-    match settings.cursor_shape {
-        CursorShapeSetting::Beam => ansi::CursorShape::Beam,
-        CursorShapeSetting::Underline => ansi::CursorShape::Underline,
-        _ => ansi::CursorShape::Block,
     }
 }

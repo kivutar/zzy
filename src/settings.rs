@@ -260,6 +260,41 @@ fn bind<T: PartialEq + 'static>(
     )
 }
 
+fn switch(
+    view: &Entity<SettingsView>,
+    get: fn(&AppSettings) -> bool,
+    set: fn(&mut AppSettings, bool),
+) -> SettingField<bool> {
+    let (read, write) = bind(view, get, set);
+    SettingField::switch(read, write).default_value(get(&AppSettings::default()))
+}
+
+fn text(
+    view: &Entity<SettingsView>,
+    get: fn(&AppSettings) -> SharedString,
+    set: fn(&mut AppSettings, SharedString),
+) -> SettingField<SharedString> {
+    let (read, write) = bind(view, get, set);
+    SettingField::input(read, write).default_value(get(&AppSettings::default()))
+}
+
+/// A number field; values are clamped to `range` before `set` sees them.
+fn number(
+    view: &Entity<SettingsView>,
+    (min, max): (f64, f64),
+    step: f64,
+    get: fn(&AppSettings) -> f64,
+    set: fn(&mut AppSettings, f64),
+) -> SettingField<f64> {
+    let (read, write) = bind(view, get, set);
+    SettingField::number_input(
+        NumberFieldOptions { min, max, step },
+        read,
+        move |value: f64, cx: &mut App| write(value.clamp(min, max), cx),
+    )
+    .default_value(get(&AppSettings::default()))
+}
+
 fn dropdown<T: Copy + PartialEq + 'static>(
     view: &Entity<SettingsView>,
     choices: Choices<T>,
@@ -294,119 +329,55 @@ fn dropdown<T: Copy + PartialEq + 'static>(
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
-        let defaults = AppSettings::default();
 
-        let font_family = {
-            let (read, write) = bind(&view, |s| s.font_family.clone(), |s, v| s.font_family = v);
-            SettingField::input(read, write).default_value(defaults.font_family.clone())
-        };
-        let font_size = {
-            let (read, write) = bind(
-                &view,
-                |s| s.font_size as f64,
-                |s, v| s.font_size = v.clamp(FONT_SIZE_RANGE.0, FONT_SIZE_RANGE.1) as f32,
-            );
-            let options = NumberFieldOptions {
-                min: FONT_SIZE_RANGE.0,
-                max: FONT_SIZE_RANGE.1,
-                step: 1.0,
-            };
-            SettingField::number_input(options, read, write)
-                .default_value(defaults.font_size as f64)
-        };
-        let cursor_blink = {
-            let (read, write) = bind(&view, |s| s.cursor_blink, |s, v| s.cursor_blink = v);
-            SettingField::switch(read, write).default_value(defaults.cursor_blink)
-        };
-        let opacity = {
-            let (read, write) = bind(
-                &view,
-                |s| (s.background_opacity as f64 * 100.0).round(),
-                |s, v| {
-                    s.background_opacity =
-                        (v.clamp(OPACITY_RANGE.0, OPACITY_RANGE.1) / 100.0) as f32
-                },
-            );
-            let options = NumberFieldOptions {
-                min: OPACITY_RANGE.0,
-                max: OPACITY_RANGE.1,
-                step: 5.0,
-            };
-            SettingField::number_input(options, read, write)
-                .default_value(defaults.background_opacity as f64 * 100.0)
-        };
-        let blur = {
-            let (read, write) = bind(&view, |s| s.background_blur, |s, v| s.background_blur = v);
-            SettingField::switch(read, write).default_value(defaults.background_blur)
-        };
-        let padding = {
-            let (read, write) = bind(
-                &view,
-                |s| s.padding as f64,
-                |s, v| s.padding = v.clamp(PADDING_RANGE.0, PADDING_RANGE.1).round() as f32,
-            );
-            let options = NumberFieldOptions {
-                min: PADDING_RANGE.0,
-                max: PADDING_RANGE.1,
-                step: 2.0,
-            };
-            SettingField::number_input(options, read, write).default_value(defaults.padding as f64)
-        };
-        let line_height = {
-            let (read, write) = bind(
-                &view,
-                // Rounded to the 0.05 step so float noise doesn't show in the field.
-                |s| (s.line_height as f64 * 20.0).round() / 20.0,
-                |s, v| s.line_height = v.clamp(LINE_HEIGHT_RANGE.0, LINE_HEIGHT_RANGE.1) as f32,
-            );
-            let options = NumberFieldOptions {
-                min: LINE_HEIGHT_RANGE.0,
-                max: LINE_HEIGHT_RANGE.1,
-                step: 0.05,
-            };
-            SettingField::number_input(options, read, write)
-                .default_value(defaults.line_height as f64)
-        };
-        let ignore_title = {
-            let (read, write) = bind(
-                &view,
-                |s| s.ignore_program_title,
-                |s, v| s.ignore_program_title = v,
-            );
-            SettingField::switch(read, write).default_value(defaults.ignore_program_title)
-        };
-        let tint_root = {
-            let (read, write) = bind(&view, |s| s.tint_root, |s, v| s.tint_root = v);
-            SettingField::switch(read, write).default_value(defaults.tint_root)
-        };
-        let tint_ssh = {
-            let (read, write) = bind(&view, |s| s.tint_ssh, |s, v| s.tint_ssh = v);
-            SettingField::switch(read, write).default_value(defaults.tint_ssh)
-        };
-        let command = {
-            let (read, write) = bind(&view, |s| s.command.clone(), |s, v| s.command = v);
-            SettingField::input(read, write).default_value(defaults.command.clone())
-        };
-        let login_shell = {
-            let (read, write) = bind(&view, |s| s.login_shell, |s, v| s.login_shell = v);
-            SettingField::switch(read, write).default_value(defaults.login_shell)
-        };
-        let scrollback = {
-            let (read, write) = bind(
-                &view,
-                |s| s.scrollback as f64,
-                |s, v| {
-                    s.scrollback = v.clamp(SCROLLBACK_RANGE.0, SCROLLBACK_RANGE.1).round() as usize
-                },
-            );
-            let options = NumberFieldOptions {
-                min: SCROLLBACK_RANGE.0,
-                max: SCROLLBACK_RANGE.1,
-                step: 1000.0,
-            };
-            SettingField::number_input(options, read, write)
-                .default_value(defaults.scrollback as f64)
-        };
+        let font_family = text(&view, |s| s.font_family.clone(), |s, v| s.font_family = v);
+        let font_size = number(
+            &view,
+            FONT_SIZE_RANGE,
+            1.0,
+            |s| s.font_size as f64,
+            |s, v| s.font_size = v as f32,
+        );
+        let cursor_blink = switch(&view, |s| s.cursor_blink, |s, v| s.cursor_blink = v);
+        let opacity = number(
+            &view,
+            OPACITY_RANGE,
+            5.0,
+            |s| (s.background_opacity as f64 * 100.0).round(),
+            |s, v| s.background_opacity = (v / 100.0) as f32,
+        );
+        let blur = switch(&view, |s| s.background_blur, |s, v| s.background_blur = v);
+        let padding = number(
+            &view,
+            PADDING_RANGE,
+            2.0,
+            |s| s.padding as f64,
+            |s, v| s.padding = v.round() as f32,
+        );
+        let line_height = number(
+            &view,
+            LINE_HEIGHT_RANGE,
+            0.05,
+            // Rounded to the 0.05 step so float noise doesn't show in the field.
+            |s| (s.line_height as f64 * 20.0).round() / 20.0,
+            |s, v| s.line_height = v as f32,
+        );
+        let ignore_title = switch(
+            &view,
+            |s| s.ignore_program_title,
+            |s, v| s.ignore_program_title = v,
+        );
+        let tint_root = switch(&view, |s| s.tint_root, |s, v| s.tint_root = v);
+        let tint_ssh = switch(&view, |s| s.tint_ssh, |s, v| s.tint_ssh = v);
+        let command = text(&view, |s| s.command.clone(), |s, v| s.command = v);
+        let login_shell = switch(&view, |s| s.login_shell, |s, v| s.login_shell = v);
+        let scrollback = number(
+            &view,
+            SCROLLBACK_RANGE,
+            1000.0,
+            |s| s.scrollback as f64,
+            |s, v| s.scrollback = v.round() as usize,
+        );
 
         v_flex().size_full().track_focus(&self.focus_handle).child(
             SettingsPanel::new("app-settings")
