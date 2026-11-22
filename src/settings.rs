@@ -1,3 +1,4 @@
+use crate::colors::{palette_for, rgba_hex};
 use crate::i18n::tr;
 use crate::terminal::DEFAULT_FONT_SIZE;
 use crate::theme::ThemeChoice;
@@ -6,12 +7,15 @@ use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage,
     Settings as SettingsPanel,
 };
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Sizable as _};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Window,
+    div, hsla, point, px, App, BoxShadow, Context, Div, Entity, FocusHandle, Focusable, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Window,
 };
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
 
 pub const DEFAULT_FONT_FAMILY: &str = "Adwaita Mono";
 
@@ -479,6 +483,118 @@ fn dropdown<T: Copy + PartialEq + 'static>(
     .default_value(key_of(fallback).to_string())
 }
 
+/// Theme previews, after Ptyxis's palette previews: a grid of cards (three per
+/// row) in each theme's own colors, showing its name, a sample sentence in
+/// the terminal font and six of its colors (ANSI 1 to 6). Clicking a card
+/// picks the theme; the picked one has an accent ring and a check mark.
+/// Square, unlike Ptyxis's: zzy's design has no rounded corners.
+fn theme_cards(
+    view: &Entity<SettingsView>,
+    choices: Choices<ThemeChoice>,
+    get: fn(&AppSettings) -> ThemeChoice,
+    set: fn(&mut AppSettings, ThemeChoice),
+) -> SettingItem {
+    let (read, write) = bind(view, get, set);
+    let write = Rc::new(write);
+    let view = view.clone();
+    SettingItem::render(move |_, _, cx| {
+        let current = read(cx);
+        let font = view.read(cx).settings.font_family.clone();
+        div()
+            .grid()
+            .grid_cols(3)
+            .gap(px(9.))
+            .w_full()
+            // Room for the selection ring around the edge cards.
+            .p(px(2.))
+            .children(choices.iter().map(|&(theme, key, label)| {
+                let write = write.clone();
+                theme_card(theme, key, label.text(), theme == current, font.clone(), cx)
+                    .on_click(move |_, _, cx| write(theme, cx))
+            }))
+    })
+    .keywords(choices.iter().map(|(_, _, label)| label.text()))
+}
+
+fn theme_card(
+    theme: ThemeChoice,
+    key: &'static str,
+    name: SharedString,
+    selected: bool,
+    font: SharedString,
+    cx: &App,
+) -> Stateful<Div> {
+    let palette = palette_for(theme);
+    let (bg, fg) = (rgba_hex(palette.default_bg), rgba_hex(palette.default_fg));
+    // An accent that shows on dark and light cards alike (the theme's
+    // primary color is near-black or near-white), like Ptyxis's blue.
+    let accent = cx.theme().blue;
+    let ring = |color: Hsla, spread: f32| BoxShadow {
+        color,
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(spread),
+        inset: false,
+    };
+    let soft = |alpha: f32, y: f32, blur: f32, spread: f32| BoxShadow {
+        color: hsla(0., 0., 0., alpha),
+        offset: point(px(0.), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(spread),
+        inset: false,
+    };
+    div()
+        .id(key)
+        .cursor_pointer()
+        .bg(bg)
+        .shadow(if selected {
+            vec![ring(accent, 2.)]
+        } else {
+            vec![
+                ring(cx.theme().border, 1.),
+                soft(0.07, 1., 3., 1.),
+                soft(0.03, 2., 6., 2.),
+            ]
+        })
+        .child(
+            v_flex()
+                .p(px(12.))
+                .gap(px(12.))
+                .text_color(fg)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().flex_1().min_w_0().truncate().child(name))
+                        .child(
+                            div()
+                                .flex_none()
+                                .size(px(20.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when(selected, |this| {
+                                    this.bg(accent)
+                                        .text_color(gpui_kit::white())
+                                        .child(Icon::new(IconName::Check).xsmall())
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .font_family(font)
+                        .line_clamp(3)
+                        .child(tr("settings.theme_sample")),
+                )
+                .child(h_flex().gap(px(3.)).children((1..=6).map(|index| {
+                    div()
+                        .flex_1()
+                        .min_w(px(20.))
+                        .h(px(16.))
+                        .bg(rgba_hex(palette.indexed[index]))
+                }))),
+        )
+}
+
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
@@ -590,28 +706,30 @@ impl Render for SettingsView {
                                         |s, v| s.appearance = v,
                                     ),
                                 ),
-                                SettingItem::new(
-                                    tr("settings.dark_theme"),
-                                    dropdown(
-                                        &view,
-                                        DARK_THEMES,
-                                        |s| s.dark_theme,
-                                        |s, v| s.dark_theme = v,
-                                    ),
-                                ),
-                                SettingItem::new(
-                                    tr("settings.light_theme"),
-                                    dropdown(
-                                        &view,
-                                        LIGHT_THEMES,
-                                        |s| s.light_theme,
-                                        |s, v| s.light_theme = v,
-                                    ),
-                                ),
                                 SettingItem::new(tr("settings.background_opacity"), opacity),
                                 SettingItem::new(tr("settings.background_blur"), blur),
                                 SettingItem::new(tr("settings.minimum_contrast"), minimum_contrast),
                             ]),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.dark_theme"))
+                            .item(theme_cards(
+                                &view,
+                                DARK_THEMES,
+                                |s| s.dark_theme,
+                                |s, v| s.dark_theme = v,
+                            )),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.light_theme"))
+                            .item(theme_cards(
+                                &view,
+                                LIGHT_THEMES,
+                                |s| s.light_theme,
+                                |s, v| s.light_theme = v,
+                            )),
                     )
                     .group(
                         SettingGroup::new()

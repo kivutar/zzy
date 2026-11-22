@@ -28,6 +28,9 @@ settings.dark_theme:
 settings.light_theme:
   en: Light Theme
   ja: ライトテーマ
+settings.theme_sample:
+  en: The quick brown fox jumps over the lazy dog
+  ja: いろはにほへと ちりぬるを わかよたれそ つねならむ
 settings.background_opacity:
   en: Background Opacity (%)
   ja: 背景の不透明度 (%)
