@@ -104,6 +104,8 @@ mod tests {
         assert_eq!(parse_effective_uid("Name:\tbash\n"), None);
     }
 
+    /// Reads `/proc`, which only Linux has.
+    #[cfg(target_os = "linux")]
     #[test]
     fn detects_our_own_shell_as_normal() {
         let our_uid = effective_uid("self");

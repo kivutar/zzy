@@ -96,6 +96,12 @@ impl Pty {
         let pgid = unsafe { libc::tcgetpgrp(self.master.as_raw_fd()) };
         (pgid > 0).then_some(pgid)
     }
+
+    /// Unknown on Windows (no process groups): the root/SSH tint stays off.
+    #[cfg(not(unix))]
+    pub(crate) fn foreground_process_group(&self) -> Option<i32> {
+        None
+    }
 }
 
 impl Drop for Pty {
