@@ -50,6 +50,8 @@ pub struct AppSettings {
     pub language: Language,
     /// Show the tabs in the title bar instead of a bar of their own.
     pub tabs_in_title_bar: bool,
+    /// Keep the window border when maximized, fullscreen or snapped.
+    pub border_when_maximized: bool,
 }
 
 impl Default for AppSettings {
@@ -76,6 +78,7 @@ impl Default for AppSettings {
             tint_root: true,
             tint_ssh: true,
             tabs_in_title_bar: false,
+            border_when_maximized: false,
         }
     }
 }
@@ -442,6 +445,11 @@ impl Render for SettingsView {
         );
         let tint_root = switch(&view, |s| s.tint_root, |s, v| s.tint_root = v);
         let tint_ssh = switch(&view, |s| s.tint_ssh, |s, v| s.tint_ssh = v);
+        let border_when_maximized = switch(
+            &view,
+            |s| s.border_when_maximized,
+            |s, v| s.border_when_maximized = v,
+        );
         let tabs_in_title_bar = switch(
             &view,
             |s| s.tabs_in_title_bar,
@@ -499,6 +507,10 @@ impl Render for SettingsView {
                                 SettingItem::new(
                                     tr("settings.tabs_in_title_bar"),
                                     tabs_in_title_bar,
+                                ),
+                                SettingItem::new(
+                                    tr("settings.border_when_maximized"),
+                                    border_when_maximized,
                                 ),
                             ]),
                     )

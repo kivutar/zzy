@@ -379,9 +379,22 @@ impl Render for Zzy {
                 .child(self.render_tab_bar(None, cx))
         };
 
+        // gpui-kit only borders the window edges that aren't tiled; optionally
+        // draw the same border on the others (maximized, fullscreen, snapped).
+        let extra_border = if self.settings.border_when_maximized {
+            borderless_edges(window)
+        } else {
+            Edges::default()
+        };
+
         v_flex()
             .size_full()
             .when_some(window_tint, |this, color| this.bg(color.opacity(0.1)))
+            .border_color(cx.theme().window_border)
+            .when(extra_border.top, |this| this.border_t_1())
+            .when(extra_border.bottom, |this| this.border_b_1())
+            .when(extra_border.left, |this| this.border_l_1())
+            .when(extra_border.right, |this| this.border_r_1())
             .child(header)
             .child(
                 v_flex()
@@ -462,6 +475,21 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
         theme.table_row_border = border;
         theme.mono_font_family = settings::DEFAULT_FONT_FAMILY.into();
     });
+}
+
+/// The window edges gpui-kit's frame leaves without a border: the tiled ones
+/// (all of them when maximized). Under server-side decorations it draws no
+/// frame at all, and the window manager's goes away in fullscreen.
+fn borderless_edges(window: &Window) -> Edges<bool> {
+    match window.window_decorations() {
+        Decorations::Client { tiling } => Edges {
+            top: tiling.top,
+            bottom: tiling.bottom,
+            left: tiling.left,
+            right: tiling.right,
+        },
+        Decorations::Server => Edges::all(window.is_fullscreen()),
+    }
 }
 
 /// A title bar button drawn like gpui-kit's window controls (a full-height
