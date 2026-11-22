@@ -1,0 +1,160 @@
+_version: 2
+
+# Settings panel: pages, groups and fields.
+settings.page.terminal:
+  en: Terminal
+  ja: ターミナル
+settings.group.font:
+  en: Font
+  ja: フォント
+settings.font_family:
+  en: Font Family
+  ja: フォントファミリー
+settings.font_size:
+  en: Font Size
+  ja: フォントサイズ
+settings.bold_text:
+  en: Bold Text
+  ja: 太字の表示
+settings.group.theme:
+  en: Theme
+  ja: テーマ
+settings.color_theme:
+  en: Color Theme
+  ja: カラーテーマ
+settings.background_opacity:
+  en: Background Opacity (%)
+  ja: 背景の不透明度 (%)
+settings.background_blur:
+  en: Background Blur
+  ja: 背景のぼかし
+settings.group.layout:
+  en: Layout
+  ja: レイアウト
+settings.padding:
+  en: Padding (px)
+  ja: 余白 (px)
+settings.line_height:
+  en: Line Height
+  ja: 行の高さ
+settings.group.cursor:
+  en: Cursor
+  ja: カーソル
+settings.cursor_blink:
+  en: Cursor Blinking
+  ja: カーソルの点滅
+settings.cursor_shape:
+  en: Cursor Shape
+  ja: カーソルの形
+settings.group.history:
+  en: History
+  ja: 履歴
+settings.scrollback:
+  en: Scrollback Lines
+  ja: スクロールバックの行数
+settings.scrollbar:
+  en: Scrollbar
+  ja: スクロールバー
+settings.group.shell:
+  en: Shell
+  ja: シェル
+settings.command:
+  en: Command
+  ja: コマンド
+settings.login_shell:
+  en: Login Shell
+  ja: ログインシェル
+settings.new_tab_directory:
+  en: New Tab Directory
+  ja: 新しいタブのディレクトリ
+settings.group.behavior:
+  en: Behavior
+  ja: 動作
+settings.language:
+  en: Language
+  ja: 言語
+settings.bell:
+  en: Bell
+  ja: ベル
+settings.ignore_program_title:
+  en: Ignore Program Titles
+  ja: プログラムが設定するタイトルを無視
+settings.tint_root:
+  en: Red Tint for Root
+  ja: root 実行時に赤く色付け
+settings.tint_ssh:
+  en: Green Tint for SSH
+  ja: SSH 接続時に緑に色付け
+
+# Dropdown choices.
+choice.bold_font:
+  en: Bold Font
+  ja: 太字フォント
+choice.bright_colors:
+  en: Bright Colors
+  ja: 明るい色
+choice.bold_font_and_bright_colors:
+  en: Bold Font and Bright Colors
+  ja: 太字フォントと明るい色
+choice.normal:
+  en: Normal
+  ja: 通常
+choice.block:
+  en: Block
+  ja: ブロック
+choice.beam:
+  en: Beam
+  ja: 縦線
+choice.underline:
+  en: Underline
+  ja: 下線
+choice.auto:
+  en: Auto
+  ja: 自動
+choice.always:
+  en: Always
+  ja: 常に表示
+choice.never:
+  en: Never
+  ja: 表示しない
+choice.sound:
+  en: Sound
+  ja: 音
+choice.flash:
+  en: Flash
+  ja: 画面のフラッシュ
+choice.sound_and_flash:
+  en: Sound and Flash
+  ja: 音と画面のフラッシュ
+choice.off:
+  en: "Off"
+  ja: オフ
+choice.current_tab_directory:
+  en: Current Tab's Directory
+  ja: 現在のタブのディレクトリ
+choice.home:
+  en: Home
+  ja: ホーム
+choice.system_language:
+  en: System
+  ja: システムに合わせる
+
+# Tabs and the terminal's context menu.
+tab.settings:
+  en: Settings
+  ja: 設定
+tab.none:
+  en: No tabs
+  ja: タブがありません
+menu.copy:
+  en: Copy
+  ja: コピー
+menu.paste:
+  en: Paste
+  ja: 貼り付け
+menu.select_all:
+  en: Select All
+  ja: すべて選択
+menu.select_none:
+  en: Select None
+  ja: 選択を解除

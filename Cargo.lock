@@ -8949,6 +8949,7 @@ dependencies = [
  "gpui-kit",
  "libc",
  "parking_lot",
+ "rust-i18n",
  "serde",
  "shell-words",
  "toml 1.2.2+spec-1.1.0",

@@ -1,5 +1,6 @@
 mod colors;
 mod config;
+mod i18n;
 mod settings;
 mod tab_bar;
 mod terminal;
@@ -181,6 +182,11 @@ impl Zzy {
         {
             apply_app_theme(&settings, cx);
         }
+        if settings.language != self.settings.language {
+            i18n::apply(settings.language);
+            // Every view shows translated text, not only this one.
+            cx.refresh_windows();
+        }
         window.set_background_appearance(background_appearance(&settings));
         for tab in &self.tabs {
             if let TabContent::Terminal(term) = tab {
@@ -248,7 +254,7 @@ impl Zzy {
 impl Render for Zzy {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.tabs.is_empty() {
-            return v_flex().child("No tabs");
+            return v_flex().child(i18n::tr("tab.none"));
         }
 
         if self.focus_pending {
@@ -403,6 +409,8 @@ fn background_appearance(settings: &AppSettings) -> WindowBackgroundAppearance {
     }
 }
 
+rust_i18n::i18n!("locales", fallback = "en");
+
 fn main() {
     let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
 
@@ -410,6 +418,7 @@ fn main() {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         let settings = config::load_settings();
+        i18n::apply(settings.language);
         let window_state = config::load_window_state();
         apply_app_theme(&settings, cx);
 

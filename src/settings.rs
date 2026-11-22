@@ -1,3 +1,4 @@
+use crate::i18n::tr;
 use crate::terminal::DEFAULT_FONT_SIZE;
 use crate::theme::ThemeChoice;
 use gpui_kit::component::group_box::GroupBoxVariant;
@@ -45,6 +46,8 @@ pub struct AppSettings {
     pub tint_root: bool,
     /// Tint the window background green during SSH sessions.
     pub tint_ssh: bool,
+    /// Language of the interface.
+    pub language: Language,
 }
 
 impl Default for AppSettings {
@@ -58,6 +61,7 @@ impl Default for AppSettings {
             scrollback: 1000,
             scrollbar: ScrollbarVisibility::Auto,
             theme: ThemeChoice::HamiMelonDark,
+            language: Language::System,
             background_opacity: 1.0,
             background_blur: true,
             command: SharedString::default(),
@@ -155,62 +159,128 @@ pub enum NewTabDirectory {
     Home,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Language {
+    /// Follow the system locale.
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "ja")]
+    Japanese,
+}
+
+/// A dropdown entry's text: translated, or a name shown as is.
+#[derive(Clone, Copy)]
+enum Label {
+    Key(&'static str),
+    Name(&'static str),
+}
+
+impl Label {
+    fn text(self) -> SharedString {
+        match self {
+            Self::Key(key) => tr(key),
+            Self::Name(name) => name.into(),
+        }
+    }
+}
+
 /// Dropdown entries: (value, key, label), in display order.
-type Choices<T> = &'static [(T, &'static str, &'static str)];
+type Choices<T> = &'static [(T, &'static str, Label)];
+
+/// Language names are always written in their own language.
+const LANGUAGES: Choices<Language> = &[
+    (
+        Language::System,
+        "system",
+        Label::Key("choice.system_language"),
+    ),
+    (Language::English, "en", Label::Name("English")),
+    (Language::Japanese, "ja", Label::Name("日本語")),
+];
 
 const THEMES: Choices<ThemeChoice> = &[
-    (ThemeChoice::RosePine, "rose-pine", "Rosé Pine"),
-    (ThemeChoice::Dracula, "dracula", "Dracula"),
-    (ThemeChoice::GruvboxDark, "gruvbox-dark", "Gruvbox Dark"),
+    (ThemeChoice::RosePine, "rose-pine", Label::Name("Rosé Pine")),
+    (ThemeChoice::Dracula, "dracula", Label::Name("Dracula")),
+    (
+        ThemeChoice::GruvboxDark,
+        "gruvbox-dark",
+        Label::Name("Gruvbox Dark"),
+    ),
     (
         ThemeChoice::HamiMelonDark,
         "hami-melon-dark",
-        "Hami Melon Dark",
+        Label::Name("Hami Melon Dark"),
     ),
-    (ThemeChoice::AyuDark, "ayu-dark", "Ayu Dark"),
+    (ThemeChoice::AyuDark, "ayu-dark", Label::Name("Ayu Dark")),
 ];
 
 const CURSOR_SHAPES: Choices<CursorShapeSetting> = &[
-    (CursorShapeSetting::Block, "block", "Block"),
-    (CursorShapeSetting::Beam, "beam", "Beam"),
-    (CursorShapeSetting::Underline, "underline", "Underline"),
+    (
+        CursorShapeSetting::Block,
+        "block",
+        Label::Key("choice.block"),
+    ),
+    (CursorShapeSetting::Beam, "beam", Label::Key("choice.beam")),
+    (
+        CursorShapeSetting::Underline,
+        "underline",
+        Label::Key("choice.underline"),
+    ),
 ];
 
 const SCROLLBARS: Choices<ScrollbarVisibility> = &[
-    (ScrollbarVisibility::Auto, "auto", "Auto"),
-    (ScrollbarVisibility::Always, "always", "Always"),
-    (ScrollbarVisibility::Never, "never", "Never"),
+    (ScrollbarVisibility::Auto, "auto", Label::Key("choice.auto")),
+    (
+        ScrollbarVisibility::Always,
+        "always",
+        Label::Key("choice.always"),
+    ),
+    (
+        ScrollbarVisibility::Never,
+        "never",
+        Label::Key("choice.never"),
+    ),
 ];
 
 const BELL_MODES: Choices<BellMode> = &[
-    (BellMode::Sound, "sound", "Sound"),
-    (BellMode::Flash, "flash", "Flash"),
+    (BellMode::Sound, "sound", Label::Key("choice.sound")),
+    (BellMode::Flash, "flash", Label::Key("choice.flash")),
     (
         BellMode::SoundAndFlash,
         "sound-and-flash",
-        "Sound and Flash",
+        Label::Key("choice.sound_and_flash"),
     ),
-    (BellMode::Off, "off", "Off"),
+    (BellMode::Off, "off", Label::Key("choice.off")),
 ];
 
 const BOLD_TEXT: Choices<BoldText> = &[
-    (BoldText::BoldFont, "bold-font", "Bold Font"),
-    (BoldText::BrightColors, "bright-colors", "Bright Colors"),
+    (
+        BoldText::BoldFont,
+        "bold-font",
+        Label::Key("choice.bold_font"),
+    ),
+    (
+        BoldText::BrightColors,
+        "bright-colors",
+        Label::Key("choice.bright_colors"),
+    ),
     (
         BoldText::BoldFontAndBrightColors,
         "bold-font-and-bright-colors",
-        "Bold Font and Bright Colors",
+        Label::Key("choice.bold_font_and_bright_colors"),
     ),
-    (BoldText::Normal, "normal", "Normal"),
+    (BoldText::Normal, "normal", Label::Key("choice.normal")),
 ];
 
 const NEW_TAB_DIRECTORIES: Choices<NewTabDirectory> = &[
     (
         NewTabDirectory::Current,
         "current",
-        "Current Tab's Directory",
+        Label::Key("choice.current_tab_directory"),
     ),
-    (NewTabDirectory::Home, "home", "Home"),
+    (NewTabDirectory::Home, "home", Label::Key("choice.home")),
 ];
 
 pub(crate) const FONT_SIZE_RANGE: (f64, f64) = (8.0, 72.0);
@@ -312,7 +382,7 @@ fn dropdown<T: Copy + PartialEq + 'static>(
     SettingField::dropdown(
         choices
             .iter()
-            .map(|(_, key, label)| ((*key).into(), (*label).into()))
+            .map(|(_, key, label)| ((*key).into(), label.text()))
             .collect(),
         move |cx: &App| key_of(read(cx)).into(),
         move |key: SharedString, cx: &mut App| {
@@ -382,68 +452,115 @@ impl Render for SettingsView {
         v_flex().size_full().track_focus(&self.focus_handle).child(
             SettingsPanel::new("app-settings")
                 .with_group_variant(GroupBoxVariant::Outline)
-                .pages(vec![SettingPage::new("Terminal")
-                    .group(SettingGroup::new().title("Font").items(vec![
-                        SettingItem::new("Font Family", font_family),
-                        SettingItem::new("Font Size", font_size),
-                        SettingItem::new(
-                            "Bold Text",
-                            dropdown(&view, BOLD_TEXT, |s| s.bold_text, |s, v| s.bold_text = v),
-                        ),
-                    ]))
-                    .group(SettingGroup::new().title("Theme").items(vec![
-                        SettingItem::new(
-                            "Color Theme",
-                            dropdown(&view, THEMES, |s| s.theme, |s, v| s.theme = v),
-                        ),
-                        SettingItem::new("Background Opacity (%)", opacity),
-                        SettingItem::new("Background Blur", blur),
-                    ]))
-                    .group(SettingGroup::new().title("Layout").items(vec![
-                        SettingItem::new("Padding (px)", padding),
-                        SettingItem::new("Line Height", line_height),
-                    ]))
-                    .group(SettingGroup::new().title("Cursor").items(vec![
-                        SettingItem::new("Cursor Blinking", cursor_blink),
-                        SettingItem::new(
-                            "Cursor Shape",
-                            dropdown(
-                                &view,
-                                CURSOR_SHAPES,
-                                |s| s.cursor_shape,
-                                |s, v| s.cursor_shape = v,
-                            ),
-                        ),
-                    ]))
-                    .group(SettingGroup::new().title("History").items(vec![
-                        SettingItem::new("Scrollback Lines", scrollback),
-                        SettingItem::new(
-                            "Scrollbar",
-                            dropdown(&view, SCROLLBARS, |s| s.scrollbar, |s, v| s.scrollbar = v),
-                        ),
-                    ]))
-                    .group(SettingGroup::new().title("Shell").items(vec![
-                        SettingItem::new("Command", command),
-                        SettingItem::new("Login Shell", login_shell),
-                        SettingItem::new(
-                            "New Tab Directory",
-                            dropdown(
-                                &view,
-                                NEW_TAB_DIRECTORIES,
-                                |s| s.new_tab_directory,
-                                |s, v| s.new_tab_directory = v,
-                            ),
-                        ),
-                    ]))
-                    .group(SettingGroup::new().title("Behavior").items(vec![
-                        SettingItem::new(
-                            "Bell",
-                            dropdown(&view, BELL_MODES, |s| s.bell, |s, v| s.bell = v),
-                        ),
-                        SettingItem::new("Ignore Program Titles", ignore_title),
-                        SettingItem::new("Red Tint for Root", tint_root),
-                        SettingItem::new("Green Tint for SSH", tint_ssh),
-                    ]))]),
+                .pages(vec![SettingPage::new(tr("settings.page.terminal"))
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.group.font"))
+                            .items(vec![
+                                SettingItem::new(tr("settings.font_family"), font_family),
+                                SettingItem::new(tr("settings.font_size"), font_size),
+                                SettingItem::new(
+                                    tr("settings.bold_text"),
+                                    dropdown(
+                                        &view,
+                                        BOLD_TEXT,
+                                        |s| s.bold_text,
+                                        |s, v| s.bold_text = v,
+                                    ),
+                                ),
+                            ]),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.group.theme"))
+                            .items(vec![
+                                SettingItem::new(
+                                    tr("settings.color_theme"),
+                                    dropdown(&view, THEMES, |s| s.theme, |s, v| s.theme = v),
+                                ),
+                                SettingItem::new(tr("settings.background_opacity"), opacity),
+                                SettingItem::new(tr("settings.background_blur"), blur),
+                            ]),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.group.layout"))
+                            .items(vec![
+                                SettingItem::new(tr("settings.padding"), padding),
+                                SettingItem::new(tr("settings.line_height"), line_height),
+                            ]),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.group.cursor"))
+                            .items(vec![
+                                SettingItem::new(tr("settings.cursor_blink"), cursor_blink),
+                                SettingItem::new(
+                                    tr("settings.cursor_shape"),
+                                    dropdown(
+                                        &view,
+                                        CURSOR_SHAPES,
+                                        |s| s.cursor_shape,
+                                        |s, v| s.cursor_shape = v,
+                                    ),
+                                ),
+                            ]),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.group.history"))
+                            .items(vec![
+                                SettingItem::new(tr("settings.scrollback"), scrollback),
+                                SettingItem::new(
+                                    tr("settings.scrollbar"),
+                                    dropdown(
+                                        &view,
+                                        SCROLLBARS,
+                                        |s| s.scrollbar,
+                                        |s, v| s.scrollbar = v,
+                                    ),
+                                ),
+                            ]),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.group.shell"))
+                            .items(vec![
+                                SettingItem::new(tr("settings.command"), command),
+                                SettingItem::new(tr("settings.login_shell"), login_shell),
+                                SettingItem::new(
+                                    tr("settings.new_tab_directory"),
+                                    dropdown(
+                                        &view,
+                                        NEW_TAB_DIRECTORIES,
+                                        |s| s.new_tab_directory,
+                                        |s, v| s.new_tab_directory = v,
+                                    ),
+                                ),
+                            ]),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.group.behavior"))
+                            .items(vec![
+                                SettingItem::new(
+                                    tr("settings.language"),
+                                    dropdown(
+                                        &view,
+                                        LANGUAGES,
+                                        |s| s.language,
+                                        |s, v| s.language = v,
+                                    ),
+                                ),
+                                SettingItem::new(
+                                    tr("settings.bell"),
+                                    dropdown(&view, BELL_MODES, |s| s.bell, |s, v| s.bell = v),
+                                ),
+                                SettingItem::new(tr("settings.ignore_program_title"), ignore_title),
+                                SettingItem::new(tr("settings.tint_root"), tint_root),
+                                SettingItem::new(tr("settings.tint_ssh"), tint_ssh),
+                            ]),
+                    )]),
         )
     }
 }

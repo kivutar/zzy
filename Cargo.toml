@@ -15,6 +15,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.2.2"
 shell-words = "1.1.1"
 libc = "0.2.191"
+rust-i18n = "4.2"
 
 # Workaround for KWin (6.8) offsetting the ext-background-effect blur region by
 # the window geometry, although the protocol defines it in surface-local

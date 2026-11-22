@@ -131,9 +131,10 @@ impl Zzy {
                                 TabContent::Terminal(term) => {
                                     (term.read(cx).tab_title(), IconName::SquareTerminal)
                                 }
-                                TabContent::Settings(_) => {
-                                    ("Settings".to_string(), IconName::Settings2)
-                                }
+                                TabContent::Settings(_) => (
+                                    crate::i18n::tr("tab.settings").to_string(),
+                                    IconName::Settings2,
+                                ),
                             };
                             // Background tabs keep their own context color on the icon.
                             let icon = Icon::new(tab_icon.clone())

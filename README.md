@@ -13,6 +13,7 @@ Features:
 - A red window tint while running as root, and a green one during SSH sessions
 - Settings editable from a built-in panel, saved to
   `~/.config/zzy/settings.toml`
+- English and Japanese interface, following the system language by default
 
 ## Building
 

@@ -303,22 +303,27 @@ impl Render for TerminalView {
 
                 type MenuAction = fn(&mut TerminalView, &mut Context<TerminalView>);
                 let items: [(&'static str, &'static str, bool, MenuAction); 4] = [
-                    ("Copy", "ctrl-shift-c", has_selection, |view, cx| {
+                    ("menu.copy", "ctrl-shift-c", has_selection, |view, cx| {
                         view.copy_selection_to_clipboard(cx);
                     }),
-                    ("Paste", "ctrl-shift-v", can_paste, |view, cx| {
+                    ("menu.paste", "ctrl-shift-v", can_paste, |view, cx| {
                         view.paste_from_clipboard(cx);
                     }),
-                    ("Select All", "ctrl-shift-a", true, |view, cx| {
+                    ("menu.select_all", "ctrl-shift-a", true, |view, cx| {
                         if view.select_all() {
                             cx.notify();
                         }
                     }),
-                    ("Select None", "ctrl-shift-d", has_selection, |view, cx| {
-                        if view.clear_selection() {
-                            cx.notify();
-                        }
-                    }),
+                    (
+                        "menu.select_none",
+                        "ctrl-shift-d",
+                        has_selection,
+                        |view, cx| {
+                            if view.clear_selection() {
+                                cx.notify();
+                            }
+                        },
+                    ),
                 ];
 
                 items.into_iter().fold(
@@ -331,7 +336,7 @@ impl Render for TerminalView {
                                     .w_full()
                                     .items_center()
                                     .justify_between()
-                                    .child(label)
+                                    .child(crate::i18n::tr(label))
                                     .children(Keystroke::parse(keys).ok().map(Kbd::new))
                             })
                             .on_click(move |_, _, cx| view.update(cx, action))
