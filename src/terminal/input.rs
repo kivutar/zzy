@@ -1,12 +1,13 @@
-use super::{CellPosition, SelectionRange, TerminalView};
+use super::{CellPosition, TerminalView};
 use alacritty_terminal::{
     grid::{Dimensions, Scroll},
-    index::{Column, Line},
-    term::{cell::Flags, Term, TermMode},
+    index::{Column, Line, Point as AlacPoint, Side},
+    selection::{Selection, SelectionRange, SelectionType},
+    term::TermMode,
 };
 use gpui_kit::{
     ClipboardItem, Context, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Window,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, Window,
 };
 
 impl TerminalView {
@@ -97,6 +98,8 @@ impl TerminalView {
         }
     }
 
+    /// Left button: start a selection (click: characters, double click: word,
+    /// triple click: line; Shift+click extends the current one).
     pub(crate) fn handle_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -106,41 +109,21 @@ impl TerminalView {
         if event.button != MouseButton::Left {
             return;
         }
-
-        self.selection_started_with_single_click = false;
-        self.selection_dragged = false;
         window.focus(&self.focus_handle, cx);
-        if let Some(pos) = self.cell_position_from_point(event.position) {
-            if event.click_count >= 2 {
-                if let Some(range) = self.word_bounds_at(pos) {
-                    self.selection_start = Some(range.start);
-                    self.selection_end = Some(range.end);
-                } else {
-                    self.selection_start = Some(pos);
-                    self.selection_end = Some(pos);
-                }
-                self.is_selecting = true;
-                cx.notify();
-            } else {
-                if event.modifiers.shift {
-                    if self.selection_start.is_none() {
-                        self.selection_start = Some(pos);
-                    }
-                    self.selection_end = Some(pos);
-                } else {
-                    let had_selection = self.clear_selection();
-                    self.selection_start = Some(pos);
-                    self.selection_end = Some(pos);
-                    self.selection_started_with_single_click = true;
-                    if had_selection {
-                        cx.notify();
-                    }
-                }
-                self.is_selecting = true;
-                if !self.selection_started_with_single_click {
-                    cx.notify();
+        if let Some(point) = self.grid_point(event.position) {
+            match self.term.selection.as_mut() {
+                Some(selection) if event.modifiers.shift => selection.update(point.0, point.1),
+                _ => {
+                    let ty = match event.click_count {
+                        0 | 1 => SelectionType::Simple,
+                        2 => SelectionType::Semantic,
+                        _ => SelectionType::Lines,
+                    };
+                    self.term.selection = Some(Selection::new(ty, point.0, point.1));
                 }
             }
+            self.is_selecting = true;
+            cx.notify();
         }
         cx.stop_propagation();
     }
@@ -154,12 +137,11 @@ impl TerminalView {
         if !self.is_selecting {
             return;
         }
-
-        if let Some(pos) = self.cell_position_from_point(event.position) {
-            let _ = self.selection_start.get_or_insert(pos);
-            self.selection_dragged = true;
-            self.selection_end = Some(pos);
-            cx.notify();
+        if let Some((point, side)) = self.grid_point(event.position) {
+            if let Some(selection) = self.term.selection.as_mut() {
+                selection.update(point, side);
+                cx.notify();
+            }
         }
         cx.stop_propagation();
     }
@@ -173,16 +155,12 @@ impl TerminalView {
         if event.button != MouseButton::Left {
             return;
         }
-
         self.is_selecting = false;
-        if self.selection_started_with_single_click
-            && !self.selection_dragged
-            && self.clear_selection()
-        {
+        // A plain click (no drag) leaves an empty selection: drop it.
+        if self.term.selection.as_ref().is_some_and(|s| s.is_empty()) {
+            self.term.selection = None;
             cx.notify();
         }
-        self.selection_started_with_single_click = false;
-        self.selection_dragged = false;
         cx.stop_propagation();
     }
 
@@ -209,270 +187,92 @@ impl TerminalView {
         false
     }
 
-    pub(crate) fn cell_position_from_point(
-        &self,
-        position: gpui_kit::Point<gpui_kit::Pixels>,
-    ) -> Option<CellPosition> {
+    /// The visible cell under `position` (row 0 = top of the screen), and which
+    /// half of the cell it is in.
+    pub(crate) fn cell_at(&self, position: Point<Pixels>) -> Option<(CellPosition, Side)> {
         let bounds = self.last_bounds?;
         let grid = self.term.grid();
-        let total_lines = grid.total_lines();
         let columns = grid.columns();
-        if total_lines == 0 || columns == 0 || self.cell_width <= 0.0 || self.cell_height <= 0.0 {
+        if columns == 0 || self.cell_width <= 0.0 || self.cell_height <= 0.0 {
             return None;
         }
-
         let rel_x: f32 = (position.x - bounds.origin.x).into();
         let rel_y: f32 = (position.y - bounds.origin.y).into();
         let max_col = columns.saturating_sub(1) as isize;
         let max_row = grid.screen_lines().saturating_sub(1) as isize;
         let column = ((rel_x / self.cell_width).floor() as isize).clamp(0, max_col) as usize;
-        let row = ((rel_y / self.cell_height).floor() as isize).clamp(0, max_row) as usize;
+        let line = ((rel_y / self.cell_height).floor() as isize).clamp(0, max_row) as usize;
+        let side = if rel_x - column as f32 * self.cell_width > self.cell_width / 2.0 {
+            Side::Right
+        } else {
+            Side::Left
+        };
+        Some((CellPosition { line, column }, side))
+    }
 
-        // Selections are kept in scrollback coordinates (line 0 = oldest).
-        let line = (self.viewport_start() + row).min(total_lines - 1);
-        Some(CellPosition { line, column })
+    /// The alacritty grid point under `position` (lines above the screen are
+    /// negative), accounting for the scrollback display offset.
+    fn grid_point(&self, position: Point<Pixels>) -> Option<(AlacPoint, Side)> {
+        let (cell, side) = self.cell_at(position)?;
+        let line = Line(cell.line as i32 - self.term.grid().display_offset() as i32);
+        Some((AlacPoint::new(line, Column(cell.column)), side))
     }
 
     pub(crate) fn selection_range(&self) -> Option<SelectionRange> {
-        if self.selection_started_with_single_click && !self.selection_dragged && self.is_selecting
-        {
-            return None;
-        }
-
-        let start = self.selection_start?;
-        let end = self.selection_end.unwrap_or(start);
-        let grid = self.term.grid();
-        let total_lines = grid.total_lines();
-        let columns = grid.columns();
-        if total_lines == 0 || columns == 0 {
-            return None;
-        }
-
-        let clamp = |pos: CellPosition| CellPosition {
-            line: pos.line.min(total_lines.saturating_sub(1)),
-            column: pos.column.min(columns.saturating_sub(1)),
-        };
-
-        let mut a = clamp(start);
-        let mut b = clamp(end);
-        if (b.line < a.line) || (b.line == a.line && b.column < a.column) {
-            std::mem::swap(&mut a, &mut b);
-        }
-
-        Some(SelectionRange { start: a, end: b })
-    }
-
-    pub(crate) fn selection_span_for_line(
-        &self,
-        range: &SelectionRange,
-        line_idx: usize,
-        columns: usize,
-    ) -> Option<(f32, f32)> {
-        if columns == 0 || line_idx < range.start.line || line_idx > range.end.line {
-            return None;
-        }
-
-        let start_col = if line_idx == range.start.line {
-            range.start.column
-        } else {
-            0
-        };
-        let end_col = if line_idx == range.end.line {
-            range.end.column
-        } else {
-            columns.saturating_sub(1)
-        };
-
-        if end_col < start_col {
-            return None;
-        }
-
-        let left = start_col as f32 * self.cell_width;
-        let width = (end_col - start_col + 1) as f32 * self.cell_width;
-        Some((left, width))
+        self.term.selection.as_ref()?.to_range(&self.term)
     }
 
     pub(crate) fn selected_text(&self) -> Option<String> {
-        let selection = self.selection_range()?;
-        text_in_range(&self.term, selection)
+        self.term
+            .selection_to_string()
+            .filter(|text| !text.is_empty())
     }
 
     pub(crate) fn clear_selection(&mut self) -> bool {
-        let changed = self.selection_start.take().is_some() || self.selection_end.take().is_some();
         self.is_selecting = false;
-        changed
+        self.term.selection.take().is_some()
     }
 
     pub(crate) fn has_selection(&self) -> bool {
-        self.selection_range().is_some()
+        self.term.selection.as_ref().is_some_and(|s| !s.is_empty())
     }
 
     pub(crate) fn select_all(&mut self) -> bool {
-        let grid_ref = self.term.grid();
-        let columns = grid_ref.columns();
-        let total_lines = grid_ref.total_lines();
-        if columns == 0 || total_lines == 0 {
-            let changed =
-                self.selection_start.take().is_some() || self.selection_end.take().is_some();
-            return changed;
-        }
-
-        let start = Some(CellPosition { line: 0, column: 0 });
-        let end = Some(CellPosition {
-            line: total_lines.saturating_sub(1),
-            column: columns.saturating_sub(1),
-        });
-        let changed = self.selection_start != start || self.selection_end != end;
-        self.selection_start = start;
-        self.selection_end = end;
-        changed
-    }
-
-    pub(crate) fn word_bounds_at(&self, pos: CellPosition) -> Option<SelectionRange> {
-        let grid_ref = self.term.grid();
-        let columns = grid_ref.columns();
-        if columns == 0 || grid_ref.total_lines() == 0 {
-            return None;
-        }
-
-        let line = pos.line.min(grid_ref.total_lines().saturating_sub(1));
-        let mut col = pos.column.min(columns.saturating_sub(1));
-        let ch = self.char_for_column(line, col).unwrap_or(' ');
-        let is_word = !ch.is_whitespace();
-
-        // If we clicked on a spacer, shift left until we hit a non-spacer so we include the wide char.
-        while col > 0 {
-            let grid_line =
-                Line(line as i32 - (grid_ref.total_lines() - grid_ref.screen_lines()) as i32);
-            let cell = &grid_ref[grid_line][Column(col)];
-            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                col -= 1;
-                continue;
-            }
-            break;
-        }
-
-        let mut start = col;
-        while start > 0 {
-            if let Some(c) = self.char_for_column(line, start.saturating_sub(1)) {
-                if (!c.is_whitespace()) == is_word {
-                    start -= 1;
-                    continue;
-                }
-            }
-            break;
-        }
-
-        let mut end = col;
-        while end + 1 < columns {
-            if let Some(c) = self.char_for_column(line, end + 1) {
-                if (!c.is_whitespace()) == is_word {
-                    end += 1;
-                    continue;
-                }
-            }
-            break;
-        }
-
-        Some(SelectionRange {
-            start: CellPosition {
-                line,
-                column: start,
-            },
-            end: CellPosition { line, column: end },
-        })
-    }
-
-    fn char_for_column(&self, line_idx: usize, column: usize) -> Option<char> {
-        let grid_ref = self.term.grid();
-        let columns = grid_ref.columns();
-        if line_idx >= grid_ref.total_lines() || column >= columns {
-            return None;
-        }
-
-        let screen_lines = grid_ref.screen_lines();
-        let history_size = grid_ref.total_lines().saturating_sub(screen_lines);
-        let grid_line = Line(line_idx as i32 - history_size as i32);
-        let cell = &grid_ref[grid_line][Column(column)];
-
-        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-            if column == 0 {
-                return Some(' ');
-            }
-            let prev_cell = &grid_ref[grid_line][Column(column.saturating_sub(1))];
-            return Some(prev_cell.c);
-        }
-
-        Some(cell.c)
+        let start = AlacPoint::new(self.term.grid().topmost_line(), Column(0));
+        let mut selection = Selection::new(SelectionType::Simple, start, Side::Left);
+        selection.include_all();
+        self.term.selection = Some(selection);
+        true
     }
 }
 
-/// The text in `selection`: trailing blanks trimmed per line, soft-wrapped
-/// lines joined back into one, tabs as spaces.
-fn text_in_range<T>(term: &Term<T>, selection: SelectionRange) -> Option<String> {
-    let grid_ref = term.grid();
-    let columns = grid_ref.columns();
-    let total_lines = grid_ref.total_lines();
-    if columns == 0 || total_lines == 0 {
+/// Columns of grid line `line` covered by `range`, inclusive.
+pub(crate) fn selection_columns(
+    range: &SelectionRange,
+    line: Line,
+    columns: usize,
+) -> Option<(usize, usize)> {
+    if columns == 0 || line < range.start.line || line > range.end.line {
         return None;
     }
-    let screen_lines = grid_ref.screen_lines();
-    let history_size = total_lines.saturating_sub(screen_lines);
-
-    let mut text = String::new();
-    for line_idx in selection.start.line..=selection.end.line {
-        let grid_line = Line(line_idx as i32 - history_size as i32);
-        let line_start_col = if line_idx == selection.start.line {
-            selection.start.column
-        } else {
-            0
-        };
-        let line_end_col = if line_idx == selection.end.line {
-            selection.end.column
-        } else {
-            columns.saturating_sub(1)
-        };
-
-        if line_end_col < line_start_col {
-            continue;
-        }
-
-        let mut line = String::new();
-        for col_idx in line_start_col..=line_end_col {
-            let cell = &grid_ref[grid_line][Column(col_idx)];
-            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                line.push(' ');
-                continue;
-            }
-
-            let mut ch = cell.c;
-            if ch == '\t' {
-                ch = ' ';
-            }
-            line.push(ch);
-            if let Some(extra) = cell.zerowidth() {
-                for c in extra {
-                    line.push(*c);
-                }
-            }
-        }
-
-        // Soft-wrapped lines are one logical line: join them unchanged.
-        let wrapped = line_idx < selection.end.line
-            && grid_ref[grid_line][Column(columns - 1)]
-                .flags
-                .contains(Flags::WRAPLINE);
-        if wrapped {
-            text.push_str(&line);
-        } else {
-            text.push_str(line.trim_end());
-            if line_idx < selection.end.line {
-                text.push('\n');
-            }
-        }
-    }
-
-    Some(text)
+    let last = columns - 1;
+    let (start, end) = if range.is_block {
+        (range.start.column.0, range.end.column.0)
+    } else {
+        (
+            if line == range.start.line {
+                range.start.column.0
+            } else {
+                0
+            },
+            if line == range.end.line {
+                range.end.column.0
+            } else {
+                last
+            },
+        )
+    };
+    (start <= end).then_some((start.min(last), end.min(last)))
 }
 
 /// What to send to the PTY for a paste. Shells execute on CR, not LF, so line
@@ -575,9 +375,11 @@ fn special_key_bytes(key: &str, modifier: u8, app_cursor: bool) -> Option<Vec<u8
 
 #[cfg(test)]
 mod tests {
-    use super::super::{CellPosition, SelectionRange, SimpleDimensions, TerminalEventProxy};
-    use super::{keystroke_to_bytes, paste_bytes, text_in_range};
+    use super::super::{SimpleDimensions, TerminalEventProxy};
+    use super::{keystroke_to_bytes, paste_bytes, selection_columns};
     use alacritty_terminal::{
+        index::{Column, Line, Point, Side},
+        selection::{Selection, SelectionRange, SelectionType},
         term::{Config, Term},
         vte::ansi,
     };
@@ -596,42 +398,83 @@ mod tests {
         term
     }
 
-    fn lines(start: usize, end: usize) -> SelectionRange {
-        SelectionRange {
-            start: CellPosition {
-                line: start,
-                column: 0,
-            },
-            end: CellPosition {
-                line: end,
-                column: 9,
-            },
-        }
+    /// Selects from (line, column) to (line, column), like a mouse drag.
+    fn select(
+        term: &mut Term<TerminalEventProxy>,
+        ty: SelectionType,
+        from: (i32, usize),
+        to: (i32, usize),
+    ) {
+        let mut selection =
+            Selection::new(ty, Point::new(Line(from.0), Column(from.1)), Side::Left);
+        selection.update(Point::new(Line(to.0), Column(to.1)), Side::Right);
+        term.selection = Some(selection);
     }
 
     #[test]
     fn copies_soft_wrapped_lines_as_one() {
-        let term = term_with("hello world foo");
+        let mut term = term_with("hello world foo");
+        select(&mut term, SelectionType::Simple, (0, 0), (1, 9));
         assert_eq!(
-            text_in_range(&term, lines(0, 1)).unwrap(),
+            term.selection_to_string().unwrap().trim_end(),
             "hello world foo"
         );
     }
 
     #[test]
-    fn copies_hard_line_breaks_and_trims_trailing_blanks() {
-        let term = term_with("ab  \r\ncd");
-        assert_eq!(text_in_range(&term, lines(0, 1)).unwrap(), "ab\ncd");
+    fn copies_hard_line_breaks() {
+        let mut term = term_with("ab\r\ncd");
+        select(&mut term, SelectionType::Simple, (0, 0), (1, 1));
+        assert_eq!(term.selection_to_string().unwrap(), "ab\ncd");
     }
 
     #[test]
-    fn copies_partial_line() {
-        let term = term_with("hello");
-        let range = SelectionRange {
-            start: CellPosition { line: 0, column: 1 },
-            end: CellPosition { line: 0, column: 3 },
+    fn double_click_selects_a_word() {
+        let mut term = term_with("foo bar.baz");
+        select(&mut term, SelectionType::Semantic, (0, 5), (0, 5));
+        assert_eq!(term.selection_to_string().unwrap(), "bar.baz");
+    }
+
+    #[test]
+    fn selection_follows_text_as_output_scrolls_a_full_history() {
+        let (tx, _rx) = mpsc::unbounded();
+        let config = Config {
+            scrolling_history: 2,
+            ..Config::default()
         };
-        assert_eq!(text_in_range(&term, range).unwrap(), "ell");
+        let mut term = Term::new(
+            config,
+            &SimpleDimensions::new(10, 4),
+            TerminalEventProxy { tx },
+        );
+        let mut parser = ansi::Processor::<ansi::StdSyncHandler>::new();
+        // Screen: 4, 5, 6, (prompt); the history (2 lines) is already full.
+        parser.advance(&mut term, b"1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n");
+        select(&mut term, SelectionType::Lines, (1, 0), (1, 0));
+        assert_eq!(term.selection_to_string().unwrap().trim(), "5");
+
+        // Two more lines push "5" up into the history; the selection follows it.
+        parser.advance(&mut term, b"7\r\n8\r\n");
+        assert_eq!(term.selection_to_string().unwrap().trim(), "5");
+    }
+
+    #[test]
+    fn selection_columns_per_line() {
+        let range = SelectionRange::new(
+            Point::new(Line(0), Column(3)),
+            Point::new(Line(2), Column(4)),
+            false,
+        );
+        assert_eq!(selection_columns(&range, Line(0), 10), Some((3, 9)));
+        assert_eq!(selection_columns(&range, Line(1), 10), Some((0, 9)));
+        assert_eq!(selection_columns(&range, Line(2), 10), Some((0, 4)));
+        assert_eq!(selection_columns(&range, Line(3), 10), None);
+        let block = SelectionRange::new(
+            Point::new(Line(0), Column(3)),
+            Point::new(Line(2), Column(4)),
+            true,
+        );
+        assert_eq!(selection_columns(&block, Line(1), 10), Some((3, 4)));
     }
 
     #[test]

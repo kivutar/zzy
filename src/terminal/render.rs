@@ -1,4 +1,4 @@
-use super::{BufferSnapshot, TerminalEventProxy, TerminalView};
+use super::{input::selection_columns, BufferSnapshot, TerminalEventProxy, TerminalView};
 use crate::colors::{palette_for, Palette};
 use crate::settings::ScrollbarVisibility;
 use crate::theme::ThemeChoice;
@@ -172,6 +172,10 @@ impl Render for TerminalView {
         );
         let cursor_position = buffer.cursor_position.filter(|_| self.cursor_visible);
         let selection = self.selection_range();
+        let history = {
+            let grid = self.term.grid();
+            grid.total_lines().saturating_sub(grid.screen_lines())
+        };
         let cell_height = self.cell_height;
         let view = cx.entity();
 
@@ -187,10 +191,16 @@ impl Render for TerminalView {
             // Painted first so it sits behind the text. Cells using the default
             // background don't paint one (the container already does), so the
             // highlight shows through them.
-            if let Some((left, width)) = selection
-                .as_ref()
-                .and_then(|range| self.selection_span_for_line(range, line, buffer.columns))
-            {
+            // Selections are in alacritty grid lines (negative = scrollback).
+            let grid_line = Line(line as i32 - history as i32);
+            if let Some((left, width)) = selection.as_ref().and_then(|range| {
+                selection_columns(range, grid_line, buffer.columns).map(|(start, end)| {
+                    (
+                        start as f32 * self.cell_width,
+                        (end - start + 1) as f32 * self.cell_width,
+                    )
+                })
+            }) {
                 line_row = line_row.child(
                     div()
                         .absolute()

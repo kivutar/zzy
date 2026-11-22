@@ -59,11 +59,8 @@ pub struct TerminalView {
     _activation_sub: Option<Subscription>,
     cursor_visible: bool,
     cell_metrics_measured: bool,
-    selection_start: Option<CellPosition>,
-    selection_end: Option<CellPosition>,
+    /// The left button is held after starting a selection (drag extends it).
     is_selecting: bool,
-    selection_started_with_single_click: bool,
-    selection_dragged: bool,
     /// Button (xterm code) reported as pressed to the program, if any.
     mouse_button_down: Option<u8>,
     last_mouse_cell: Option<CellPosition>,
@@ -124,12 +121,6 @@ pub(crate) struct BufferSnapshot {
 pub(crate) struct CellPosition {
     line: usize,
     column: usize,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SelectionRange {
-    start: CellPosition,
-    end: CellPosition,
 }
 
 #[derive(Clone, Copy)]
@@ -214,11 +205,7 @@ impl TerminalView {
             _activation_sub: None,
             cursor_visible: true,
             cell_metrics_measured: false,
-            selection_start: None,
-            selection_end: None,
             is_selecting: false,
-            selection_started_with_single_click: false,
-            selection_dragged: false,
             mouse_button_down: None,
             last_mouse_cell: None,
             scroll_lines_remainder: 0.0,

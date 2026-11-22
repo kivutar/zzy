@@ -171,11 +171,7 @@ impl TerminalView {
     /// The cell under `position`, relative to the visible screen (what the
     /// program sees), not to the top of the scrollback.
     fn viewport_cell(&self, position: Point<Pixels>) -> Option<CellPosition> {
-        let cell = self.cell_position_from_point(position)?;
-        Some(CellPosition {
-            line: cell.line.saturating_sub(self.viewport_start()),
-            column: cell.column,
-        })
+        self.cell_at(position).map(|(cell, _)| cell)
     }
 
     fn write_mouse_report(
