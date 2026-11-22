@@ -640,6 +640,7 @@ mod tests {
                 term,
                 ThemeChoice::Dracula,
                 false,
+                0.0,
                 start,
                 start + term.grid().screen_lines(),
             );

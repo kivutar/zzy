@@ -60,6 +60,11 @@ pub struct AppSettings {
     pub border_when_maximized: bool,
     /// Width of the window border, in pixels.
     pub border_width: f32,
+    /// Minimum APCA contrast between text and its background (0: off): text
+    /// too close to it is made lighter or darker. Same measure and default as
+    /// Zed's terminal, which also spares colors a program picked exactly (true
+    /// color, 256-color 16..) and box-drawing/Powerline characters; not yet here.
+    pub minimum_contrast: f32,
 }
 
 impl Default for AppSettings {
@@ -90,6 +95,7 @@ impl Default for AppSettings {
             tabs_in_title_bar: false,
             border_when_maximized: false,
             border_width: 1.0,
+            minimum_contrast: 45.0,
         }
     }
 }
@@ -115,6 +121,7 @@ impl AppSettings {
             |v: f64, (min, max): (f64, f64)| if v.is_nan() { min } else { v.clamp(min, max) };
         self.font_size = clamp(self.font_size as f64, FONT_SIZE_RANGE) as f32;
         self.padding = clamp(self.padding as f64, PADDING_RANGE) as f32;
+        self.minimum_contrast = clamp(self.minimum_contrast as f64, CONTRAST_RANGE) as f32;
         self.border_width = clamp(self.border_width as f64, BORDER_WIDTH_RANGE).round() as f32;
         self.line_height = clamp(self.line_height as f64, LINE_HEIGHT_RANGE) as f32;
         self.scrollback = clamp(self.scrollback as f64, SCROLLBACK_RANGE) as usize;
@@ -356,6 +363,9 @@ const NEW_TAB_DIRECTORIES: Choices<NewTabDirectory> = &[
 
 pub(crate) const FONT_SIZE_RANGE: (f64, f64) = (8.0, 72.0);
 const PADDING_RANGE: (f64, f64) = (0.0, 48.0);
+/// APCA Lc: 0 is off, 45 (the default, as in Zed) suits body text, 75 and up
+/// is high contrast.
+const CONTRAST_RANGE: (f64, f64) = (0.0, 100.0);
 /// gpui-kit always draws a 1px border, so it can't go below that.
 const BORDER_WIDTH_RANGE: (f64, f64) = (1.0, 10.0);
 const LINE_HEIGHT_RANGE: (f64, f64) = (1.0, 2.0);
@@ -512,6 +522,13 @@ impl Render for SettingsView {
         );
         let tint_root = switch(&view, |s| s.tint_root, |s, v| s.tint_root = v);
         let tint_ssh = switch(&view, |s| s.tint_ssh, |s, v| s.tint_ssh = v);
+        let minimum_contrast = number(
+            &view,
+            CONTRAST_RANGE,
+            5.0,
+            |s| s.minimum_contrast as f64,
+            |s, v| s.minimum_contrast = v.round() as f32,
+        );
         let border_width = number(
             &view,
             BORDER_WIDTH_RANGE,
@@ -593,6 +610,7 @@ impl Render for SettingsView {
                                 ),
                                 SettingItem::new(tr("settings.background_opacity"), opacity),
                                 SettingItem::new(tr("settings.background_blur"), blur),
+                                SettingItem::new(tr("settings.minimum_contrast"), minimum_contrast),
                             ]),
                     )
                     .group(

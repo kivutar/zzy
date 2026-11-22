@@ -34,6 +34,9 @@ settings.background_opacity:
 settings.background_blur:
   en: Background Blur
   ja: 背景のぼかし
+settings.minimum_contrast:
+  en: Minimum Contrast
+  ja: 最小コントラスト
 settings.group.layout:
   en: Layout
   ja: レイアウト

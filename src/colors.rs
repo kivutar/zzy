@@ -5,7 +5,8 @@ use alacritty_terminal::{
     },
     vte::ansi,
 };
-use gpui_kit::Rgba;
+use gpui_kit::{Hsla, Rgba};
+use std::{cell::RefCell, collections::HashMap};
 
 #[derive(Clone, Copy)]
 pub(crate) struct ThemeOverrides {
@@ -23,6 +24,11 @@ pub(crate) struct Palette {
     pub(crate) default_fg: Rgba,
     pub(crate) default_bg: Rgba,
     indexed: [u32; 16],
+    /// Minimum APCA contrast for text (0: off), see `ensure_contrast`.
+    min_contrast: f32,
+    /// Adjusted text colors, by (text, background), for this palette's life
+    /// (one frame): the same pairs repeat across the screen.
+    contrast_cache: RefCell<HashMap<(u32, u32), Rgba>>,
 }
 
 impl Palette {
@@ -32,6 +38,8 @@ impl Palette {
             default_fg: rgba_hex(theme.default_fg),
             default_bg: rgba_hex(theme.default_bg),
             indexed: theme.indexed,
+            min_contrast: 0.0,
+            contrast_cache: RefCell::default(),
         };
         palette.apply_theme_overrides(theme);
         // Colors a program changed (OSC 4/10/11/12, e.g. base16 shell scripts)
@@ -103,6 +111,12 @@ impl Palette {
         }
     }
 
+    /// Keep text at least `lc` (APCA) apart from its background; 0 turns it off.
+    pub(crate) fn with_min_contrast(mut self, lc: f32) -> Self {
+        self.min_contrast = lc;
+        self
+    }
+
     pub(crate) fn fg_bg(&self, cell: &Cell, bold_is_bright: bool) -> (Rgba, Rgba) {
         let mut fg = if cell.flags.contains(Flags::DIM) {
             self.resolve_dim(&cell.fg)
@@ -114,6 +128,14 @@ impl Palette {
         let mut bg = self.resolve(&cell.bg);
         if cell.flags.contains(Flags::INVERSE) {
             std::mem::swap(&mut fg, &mut bg);
+        }
+        // Dim and hidden text are meant to be faint.
+        if self.min_contrast > 0.0 && !cell.flags.intersects(Flags::DIM | Flags::HIDDEN) {
+            fg = *self
+                .contrast_cache
+                .borrow_mut()
+                .entry((hex_of(fg), hex_of(bg)))
+                .or_insert_with(|| ensure_contrast(fg, bg, self.min_contrast));
         }
         (fg, bg)
     }
@@ -225,6 +247,93 @@ fn to_rgba(rgb: ansi::Rgb) -> Rgba {
         b: rgb.b as f32 / 255.0,
         a: 1.0,
     }
+}
+
+fn hex_of(color: Rgba) -> u32 {
+    let channel = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u32;
+    channel(color.r) << 24 | channel(color.g) << 16 | channel(color.b) << 8 | channel(color.a)
+}
+
+/// APCA lightness contrast (Lc) of `text` on `background`: about 0 (none) to
+/// 106, positive for dark text on light, negative the other way (APCA-W3
+/// 0.0.98G). Zed's terminal uses the same measure for its minimum contrast.
+pub(crate) fn apca_contrast(text: Rgba, background: Rgba) -> f32 {
+    fn luminance(color: Rgba) -> f32 {
+        let y = 0.2126729 * color.r.powf(2.4)
+            + 0.7151522 * color.g.powf(2.4)
+            + 0.0721750 * color.b.powf(2.4);
+        // Soft clamp near black.
+        if y < 0.022 {
+            y + (0.022 - y).powf(1.414)
+        } else {
+            y
+        }
+    }
+    let (text, background) = (luminance(text), luminance(background));
+    if (background - text).abs() < 0.0005 {
+        return 0.0;
+    }
+    let contrast = if background > text {
+        let sapc = (background.powf(0.56) - text.powf(0.57)) * 1.14;
+        if sapc < 0.1 {
+            0.0
+        } else {
+            sapc - 0.027
+        }
+    } else {
+        let sapc = (background.powf(0.65) - text.powf(0.62)) * 1.14;
+        if sapc > -0.1 {
+            0.0
+        } else {
+            sapc + 0.027
+        }
+    };
+    contrast * 100.0
+}
+
+/// `fg`, made lighter or darker (keeping its hue) just enough to stand `min`
+/// APCA contrast away from `bg`: away from the background, toward black on
+/// light ones and toward white on dark ones.
+pub(crate) fn ensure_contrast(fg: Rgba, bg: Rgba, min: f32) -> Rgba {
+    if apca_contrast(fg, bg).abs() >= min {
+        return fg;
+    }
+    let black = Rgba {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    let white = Rgba {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let target = if apca_contrast(black, bg).abs() >= apca_contrast(white, bg).abs() {
+        0.0
+    } else {
+        1.0
+    };
+    let hsla = Hsla::from(fg);
+    let at = |t: f32| {
+        Hsla {
+            l: hsla.l + (target - hsla.l) * t,
+            ..hsla
+        }
+        .to_rgb()
+    };
+    // The smallest move toward `target` that is enough.
+    let (mut low, mut high) = (0.0f32, 1.0f32);
+    for _ in 0..16 {
+        let mid = (low + high) / 2.0;
+        if apca_contrast(at(mid), bg).abs() >= min {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    at(high)
 }
 
 pub(crate) fn rgba_hex(hex: u32) -> Rgba {
@@ -466,6 +575,44 @@ pub(crate) fn theme_border(theme: crate::theme::ThemeChoice) -> Rgba {
 mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
+
+    #[test]
+    fn apca_matches_reference_values() {
+        let black = rgba_hex(0x000000ff);
+        let white = rgba_hex(0xffffffff);
+        // APCA-W3 reference: black on white 106.04, white on black -107.88.
+        assert!((apca_contrast(black, white) - 106.04).abs() < 0.1);
+        assert!((apca_contrast(white, black) + 107.88).abs() < 0.1);
+        assert_eq!(apca_contrast(white, white), 0.0);
+    }
+
+    #[test]
+    fn faint_text_gets_the_minimum_contrast() {
+        // Hami Melon Light's ANSI white on its background: nearly invisible.
+        let (white, bg) = (rgba_hex(0xeeeeeeff), rgba_hex(0xfafafaff));
+        assert!(apca_contrast(white, bg).abs() < 10.0);
+        let fixed = ensure_contrast(white, bg, 45.0);
+        assert!(apca_contrast(fixed, bg) >= 45.0);
+        // Just enough: darker than before, but not black.
+        assert!(fixed.r < white.r && fixed.r > 0.3);
+        // Readable text is left alone.
+        let text = rgba_hex(0x585550ff);
+        assert_eq!(ensure_contrast(text, bg, 45.0), text);
+    }
+
+    #[test]
+    fn minimum_contrast_spares_dim_text_and_can_be_off() {
+        let colors = Colors::default();
+        let theme = palette_for(ThemeChoice::HamiMelonLight);
+        let white = ansi::Color::Named(ansi::NamedColor::White);
+        let on = Palette::new(&colors, theme).with_min_contrast(45.0);
+        let off = Palette::new(&colors, theme);
+        let raw = off.fg_bg(&cell(white, Flags::empty()), false).0;
+        assert_ne!(on.fg_bg(&cell(white, Flags::empty()), false).0, raw);
+        assert_eq!(off.fg_bg(&cell(white, Flags::empty()), false).0, raw);
+        let dim = cell(white, Flags::DIM);
+        assert_eq!(on.fg_bg(&dim, false).0, off.fg_bg(&dim, false).0);
+    }
 
     fn cell(fg: ansi::Color, flags: Flags) -> Cell {
         Cell {

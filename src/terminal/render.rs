@@ -34,11 +34,13 @@ impl TerminalView {
         term: &Term<TerminalEventProxy>,
         theme: ThemeChoice,
         bold_is_bright: bool,
+        min_contrast: f32,
         start_line: usize,
         end_line: usize,
     ) -> BufferSnapshot {
         let content = term.renderable_content();
-        let palette = Palette::new(content.colors, palette_for(theme));
+        let palette =
+            Palette::new(content.colors, palette_for(theme)).with_min_contrast(min_contrast);
         let cursor = content.cursor;
         let grid_ref = term.grid();
         let total_lines = grid_ref.total_lines();
@@ -128,6 +130,7 @@ impl Render for TerminalView {
                 &term,
                 self.theme,
                 self.settings.bold_text.bright_colors(),
+                self.settings.minimum_contrast,
                 start,
                 start + term.grid().screen_lines(),
             );
@@ -406,8 +409,14 @@ mod tests {
         let mut parser: ansi::Processor = ansi::Processor::new();
         parser.advance(&mut term, b"\t\x1b[31mred\x1b[0m\n");
 
-        let snapshot =
-            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark, false, 0, 1);
+        let snapshot = TerminalView::buffer_segments_for_term(
+            &term,
+            ThemeChoice::HamiMelonDark,
+            false,
+            0.0,
+            0,
+            1,
+        );
         let line = snapshot
             .segments_by_line
             .first()
@@ -433,8 +442,14 @@ mod tests {
         let mut parser: ansi::Processor = ansi::Processor::new();
         parser.advance(&mut term, "月 bar".as_bytes());
 
-        let snapshot =
-            TerminalView::buffer_segments_for_term(&term, ThemeChoice::HamiMelonDark, false, 0, 1);
+        let snapshot = TerminalView::buffer_segments_for_term(
+            &term,
+            ThemeChoice::HamiMelonDark,
+            false,
+            0.0,
+            0,
+            1,
+        );
         let runs: Vec<(usize, usize, &str)> = snapshot.segments_by_line[0]
             .iter()
             .map(|run| (run.column, run.cells, run.text.as_str()))
@@ -476,6 +491,7 @@ mod tests {
             &term,
             ThemeChoice::HamiMelonDark,
             false,
+            0.0,
             0,
             lines,
         );
@@ -488,6 +504,7 @@ mod tests {
             &term,
             ThemeChoice::HamiMelonDark,
             false,
+            0.0,
             range_start,
             lines,
         );
