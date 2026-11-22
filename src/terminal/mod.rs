@@ -1,4 +1,5 @@
 mod input;
+mod mouse;
 mod pty;
 mod render;
 
@@ -47,6 +48,11 @@ pub struct TerminalView {
     is_selecting: bool,
     selection_started_with_single_click: bool,
     selection_dragged: bool,
+    /// Button (xterm code) reported as pressed to the program, if any.
+    mouse_button_down: Option<u8>,
+    last_mouse_cell: Option<CellPosition>,
+    /// Fractional wheel lines carried over between (trackpad) scroll events.
+    scroll_lines_remainder: f32,
     cursor_blink_enabled: bool,
     ignore_bold: bool,
     config: Config,
@@ -90,7 +96,7 @@ pub(crate) struct BufferSnapshot {
     cursor_position: Option<CellPosition>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CellPosition {
     line: usize,
     column: usize,
@@ -175,6 +181,9 @@ impl TerminalView {
             is_selecting: false,
             selection_started_with_single_click: false,
             selection_dragged: false,
+            mouse_button_down: None,
+            last_mouse_cell: None,
+            scroll_lines_remainder: 0.0,
             cursor_blink_enabled: settings.cursor_blink,
             ignore_bold: settings.ignore_bold,
             config,

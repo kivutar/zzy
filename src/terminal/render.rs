@@ -18,7 +18,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     canvas, div, px, Context, FontWeight, InteractiveElement, IntoElement, Keystroke, MouseButton,
-    ParentElement, Render, ScrollEvent, StatefulInteractiveElement, Styled, Window,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window,
 };
 
 pub const DEFAULT_COLS: usize = 80;
@@ -214,6 +214,9 @@ impl Render for TerminalView {
         let mut lines_view = v_flex()
             .id("terminal-lines")
             .w_full()
+            // On a child of the scroll area so it runs before native scrolling
+            // and can claim the wheel for mouse reporting / alternate scroll.
+            .on_scroll(cx.listener(Self::handle_scroll))
             .when_some(self.error.clone(), |this, err| this.child(div().child(err)))
             .when(top_padding > 0.0, |this| {
                 this.child(div().h(px(top_padding)))
@@ -299,7 +302,13 @@ impl Render for TerminalView {
             .overflow_y_scroll()
             .scrollbar_width(px(8.0))
             .track_scroll(&self.scroll_handle)
-            .on_scroll(cx.listener(|_, _: &ScrollEvent, _, cx| cx.notify()))
+            // Inside the container so mouse reporting runs before selection
+            // and the context menu, which it suppresses while active.
+            .on_any_mouse_down(cx.listener(Self::report_mouse_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::report_mouse_up))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::report_mouse_up))
+            .on_mouse_up(MouseButton::Right, cx.listener(Self::report_mouse_up))
+            .on_mouse_move(cx.listener(Self::report_mouse_move))
             .child(
                 canvas(
                     {
