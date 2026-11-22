@@ -15,7 +15,7 @@ use gpui_kit::*;
 use settings::{AppSettings, NewTabDirectory, SettingsView};
 use terminal::{TerminalBell, TerminalExited, TerminalView};
 
-pub struct ZedTerm {
+pub struct Zzy {
     tabs: Vec<TabContent>,
     selected_index: usize,
     focus_pending: bool,
@@ -31,9 +31,9 @@ enum TabContent {
     Settings(Entity<SettingsView>),
 }
 
-impl ZedTerm {
+impl Zzy {
     fn new(settings: AppSettings, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut zedterm = Self {
+        let mut zzy = Self {
             tabs: Vec::new(),
             selected_index: 0,
             focus_pending: true,
@@ -47,24 +47,23 @@ impl ZedTerm {
         // Remember the window size. Saved shortly after each resize rather than
         // on exit: closing through the title bar removes the window directly
         // (no should-close callback) and the app exits without quit hooks.
-        zedterm._window_subscriptions =
-            vec![cx.observe_window_bounds(window, |zedterm, window, cx| {
-                let state = window_state_of(window);
-                if state == zedterm.window_state {
-                    return;
-                }
-                zedterm.window_state = state;
-                // Replacing the task cancels the pending save: one write per resize.
-                zedterm._save_window_state = Some(cx.spawn(async move |_, cx| {
-                    cx.background_executor()
-                        .timer(WINDOW_STATE_SAVE_DELAY)
-                        .await;
-                    config::save_window_state(&state);
-                }));
-            })];
+        zzy._window_subscriptions = vec![cx.observe_window_bounds(window, |zzy, window, cx| {
+            let state = window_state_of(window);
+            if state == zzy.window_state {
+                return;
+            }
+            zzy.window_state = state;
+            // Replacing the task cancels the pending save: one write per resize.
+            zzy._save_window_state = Some(cx.spawn(async move |_, cx| {
+                cx.background_executor()
+                    .timer(WINDOW_STATE_SAVE_DELAY)
+                    .await;
+                config::save_window_state(&state);
+            }));
+        })];
 
         let view = cx.entity().downgrade();
-        zedterm.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
+        zzy.keystroke_sub = Some(cx.intercept_keystrokes(move |event, window, cx| {
             let modifiers = &event.keystroke.modifiers;
             let key = &event.keystroke.key;
 
@@ -81,35 +80,35 @@ impl ZedTerm {
 
             if modifiers.control && modifiers.shift && key.eq_ignore_ascii_case("t") {
                 if let Some(view) = view.upgrade() {
-                    view.update(cx, |zedterm, cx| {
-                        zedterm.add_terminal_tab(window, cx);
-                        zedterm.focus_selected(window, cx);
+                    view.update(cx, |zzy, cx| {
+                        zzy.add_terminal_tab(window, cx);
+                        zzy.focus_selected(window, cx);
                     });
                 }
                 cx.stop_propagation();
             }
         }));
 
-        zedterm.add_terminal_tab(window, cx);
-        zedterm
+        zzy.add_terminal_tab(window, cx);
+        zzy
     }
 
     fn add_terminal_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = self.settings.clone();
         let cwd = self.new_tab_directory(cx);
         let terminal = cx.new(|cx| TerminalView::new(window, cx, &settings, cwd));
-        cx.observe(&terminal, |_zedterm, _terminal, cx| {
+        cx.observe(&terminal, |_zzy, _terminal, cx| {
             // Propagate terminal changes (e.g., title updates) to the tab bar.
             cx.notify();
         })
         .detach();
-        cx.subscribe(&terminal, |zedterm, terminal, _: &TerminalExited, cx| {
-            let index = zedterm
+        cx.subscribe(&terminal, |zzy, terminal, _: &TerminalExited, cx| {
+            let index = zzy
                 .tabs
                 .iter()
                 .position(|tab| matches!(tab, TabContent::Terminal(t) if *t == terminal));
             if let Some(index) = index {
-                zedterm.close_tab(index, cx);
+                zzy.close_tab(index, cx);
             }
         })
         .detach();
@@ -123,7 +122,7 @@ impl ZedTerm {
         cx.notify();
     }
 
-    /// Where a new tab starts. The first tab (and the fallback) is zedterm's
+    /// Where a new tab starts. The first tab (and the fallback) is zzy's
     /// own working directory, so launching it from a shell opens there.
     fn new_tab_directory(&self, cx: &App) -> Option<std::path::PathBuf> {
         match self.settings.new_tab_directory {
@@ -157,14 +156,10 @@ impl ZedTerm {
 
         let settings = self.settings.clone();
         let settings_view = cx.new(move |cx| SettingsView::new(cx, settings));
-        cx.observe_in(
-            &settings_view,
-            window,
-            |zedterm, settings_view, window, cx| {
-                let settings = settings_view.read(cx).current_settings();
-                zedterm.apply_settings(settings, window, cx);
-            },
-        )
+        cx.observe_in(&settings_view, window, |zzy, settings_view, window, cx| {
+            let settings = settings_view.read(cx).current_settings();
+            zzy.apply_settings(settings, window, cx);
+        })
         .detach();
 
         self.tabs.push(TabContent::Settings(settings_view));
@@ -250,7 +245,7 @@ impl ZedTerm {
     }
 }
 
-impl Render for ZedTerm {
+impl Render for Zzy {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.tabs.is_empty() {
             return v_flex().child("No tabs");
@@ -277,7 +272,7 @@ impl Render for ZedTerm {
                         .w_full()
                         .pr_2()
                         .justify_between()
-                        .child("zedterm")
+                        .child("zzy")
                         .child(
                             Button::new("open-settings")
                                 .ghost()
@@ -287,9 +282,9 @@ impl Render for ZedTerm {
                                 .on_click({
                                     let view = view.clone();
                                     move |_, window, cx| {
-                                        view.update(cx, |zedterm, cx| {
-                                            zedterm.ensure_settings_tab(window, cx);
-                                            zedterm.focus_selected(window, cx);
+                                        view.update(cx, |zzy, cx| {
+                                            zzy.ensure_settings_tab(window, cx);
+                                            zzy.focus_selected(window, cx);
                                         });
                                     }
                                 }),
@@ -427,10 +422,10 @@ fn main() {
         let window_options = WindowOptions {
             // Setup GPUI to use custom title bar and client-side decorations for Wayland/X11.
             titlebar: Some(TitlebarOptions {
-                title: Some("zedterm".into()),
+                title: Some("zzy".into()),
                 ..TitleBar::title_bar_options()
             }),
-            app_id: Some("zedterm".into()),
+            app_id: Some("zzy".into()),
             window_decorations: Some(WindowDecorations::Client),
             window_background: background_appearance(&settings),
             window_bounds: Some(if window_state.maximized {
@@ -443,7 +438,7 @@ fn main() {
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
-                let view = cx.new(|cx| ZedTerm::new(settings, window, cx));
+                let view = cx.new(|cx| Zzy::new(settings, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             })?;
 

@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=ZedTerm
-Comment=Minimal GPUI terminal
-TryExec=zedterm
-Exec=zedterm %F
-Icon=zedterm
+Name=zzy
+Comment=GPU-rendered terminal
+TryExec=zzy
+Exec=zzy %F
+Icon=zzy
 Terminal=false
 Categories=Utility;TerminalEmulator;
 Keywords=terminal;console;shell;

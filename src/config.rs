@@ -1,5 +1,5 @@
-//! Persistence: user settings in `$XDG_CONFIG_HOME/zedterm/settings.toml` and
-//! window state (size, maximized) in `$XDG_STATE_HOME/zedterm/window.toml`.
+//! Persistence: user settings in `$XDG_CONFIG_HOME/zzy/settings.toml` and
+//! window state (size, maximized) in `$XDG_STATE_HOME/zzy/window.toml`.
 //!
 //! Failures never stop the app: a missing or broken file falls back to the
 //! defaults (with a warning), and a failed write is reported and ignored.
@@ -11,13 +11,30 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// `$XDG_*_HOME/zedterm`, falling back to `$HOME/<fallback>/zedterm`.
+/// `$XDG_*_HOME/zzy`, falling back to `$HOME/<fallback>/zzy`.
 fn app_dir(xdg_var: &str, fallback: &str) -> Option<PathBuf> {
     let base = std::env::var_os(xdg_var)
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(fallback)))?;
-    Some(base.join("zedterm"))
+    let dir = base.join("zzy");
+    migrate_old_dir(&base.join("zedterm"), &dir);
+    Some(dir)
+}
+
+/// The app used to be called zedterm: move its directory over once, so
+/// existing settings and window state carry over.
+fn migrate_old_dir(old: &Path, new: &Path) {
+    if new.exists() || !old.is_dir() {
+        return;
+    }
+    if let Err(err) = fs::rename(old, new) {
+        eprintln!(
+            "zzy: cannot move {} to {}: {err}",
+            old.display(),
+            new.display()
+        );
+    }
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -34,12 +51,12 @@ fn load<T: DeserializeOwned + Default>(path: Option<PathBuf>) -> T {
     };
     match fs::read_to_string(&path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
-            eprintln!("zedterm: ignoring invalid {}: {err}", path.display());
+            eprintln!("zzy: ignoring invalid {}: {err}", path.display());
             T::default()
         }),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => T::default(),
         Err(err) => {
-            eprintln!("zedterm: cannot read {}: {err}", path.display());
+            eprintln!("zzy: cannot read {}: {err}", path.display());
             T::default()
         }
     }
@@ -50,7 +67,7 @@ fn save<T: Serialize>(path: Option<PathBuf>, value: &T) {
         return;
     };
     if let Err(err) = write_atomically(&path, value) {
-        eprintln!("zedterm: cannot write {}: {err}", path.display());
+        eprintln!("zzy: cannot write {}: {err}", path.display());
     }
 }
 
@@ -118,6 +135,32 @@ pub fn save_window_state(state: &WindowState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrates_the_old_zedterm_directory_once() {
+        let base = std::env::temp_dir().join(format!("zzy-migrate-{}", std::process::id()));
+        let (old, new) = (base.join("zedterm"), base.join("zzy"));
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("settings.toml"), "font-size = 20.0").unwrap();
+
+        migrate_old_dir(&old, &new);
+        assert!(!old.exists());
+        assert_eq!(
+            fs::read_to_string(new.join("settings.toml")).unwrap(),
+            "font-size = 20.0"
+        );
+
+        // An existing zzy directory is never overwritten.
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("settings.toml"), "font-size = 30.0").unwrap();
+        migrate_old_dir(&old, &new);
+        assert!(old.exists());
+        assert_eq!(
+            fs::read_to_string(new.join("settings.toml")).unwrap(),
+            "font-size = 20.0"
+        );
+        fs::remove_dir_all(&base).unwrap();
+    }
 
     #[test]
     fn settings_round_trip() {

@@ -12,7 +12,7 @@
 //!
 //! If gpui-kit gains a theme color for inactive tab borders, most of this can go.
 
-use crate::{TabContent, ZedTerm};
+use crate::{TabContent, Zzy};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -57,7 +57,7 @@ impl Render for TabDragPreview {
     }
 }
 
-impl ZedTerm {
+impl Zzy {
     /// Red while the tab's program runs as root, green during SSH (when the
     /// respective setting is on); `None` otherwise.
     pub(crate) fn context_color(&self, tab: &TabContent, cx: &App) -> Option<Hsla> {
@@ -102,9 +102,9 @@ impl ZedTerm {
                             let view = view.clone();
                             move |selected_index, window, cx| {
                                 let view = view.clone();
-                                view.update(cx, |zedterm, cx| {
-                                    zedterm.select_tab(*selected_index, cx);
-                                    zedterm.focus_selected(window, cx);
+                                view.update(cx, |zzy, cx| {
+                                    zzy.select_tab(*selected_index, cx);
+                                    zzy.focus_selected(window, cx);
                                 });
                             }
                         })
@@ -119,9 +119,9 @@ impl ZedTerm {
                                 .tab_stop(false)
                                 .on_click(move |_, window, cx| {
                                     let view = view.clone();
-                                    view.update(cx, |zedterm, cx| {
-                                        zedterm.add_terminal_tab(window, cx);
-                                        zedterm.focus_selected(window, cx);
+                                    view.update(cx, |zzy, cx| {
+                                        zzy.add_terminal_tab(window, cx);
+                                        zzy.focus_selected(window, cx);
                                     });
                                 })
                         })
@@ -184,9 +184,9 @@ impl ZedTerm {
                                 .on_click(move |_, window, cx| {
                                     cx.stop_propagation();
                                     let view = close_view.clone();
-                                    view.update(cx, |zedterm, cx| {
-                                        zedterm.close_tab(index, cx);
-                                        zedterm.focus_selected(window, cx);
+                                    view.update(cx, |zzy, cx| {
+                                        zzy.close_tab(index, cx);
+                                        zzy.focus_selected(window, cx);
                                     });
                                 });
                             let dragged = DraggedTab {
@@ -213,9 +213,9 @@ impl ZedTerm {
                                 .on_drop({
                                     let view = view.clone();
                                     move |dragged: &DraggedTab, window, cx| {
-                                        view.update(cx, |zedterm, cx| {
-                                            zedterm.move_tab(dragged.index, index, cx);
-                                            zedterm.focus_selected(window, cx);
+                                        view.update(cx, |zzy, cx| {
+                                            zzy.move_tab(dragged.index, index, cx);
+                                            zzy.focus_selected(window, cx);
                                         });
                                     }
                                 })

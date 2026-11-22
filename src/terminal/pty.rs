@@ -43,7 +43,7 @@ impl Pty {
                 .or_else(|| std::env::current_dir().ok()),
             drain_on_exit: true,
             // alacritty emulates an xterm-compatible terminal; don't pass on
-            // the TERM zedterm itself was started with (e.g. xterm-kitty).
+            // the TERM zzy itself was started with (e.g. xterm-kitty).
             env: HashMap::from([
                 ("TERM".to_string(), "xterm-256color".to_string()),
                 ("COLORTERM".to_string(), "truecolor".to_string()),

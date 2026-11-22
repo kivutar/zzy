@@ -354,7 +354,7 @@ impl TerminalView {
                 .await;
             let alive = view.update(cx, |view, cx| {
                 // No blinking (hence no redraws) while the window is in the
-                // background: an idle zedterm then costs almost nothing.
+                // background: an idle zzy then costs almost nothing.
                 if view.settings.cursor_blink && view.window_active {
                     view.cursor_visible = !view.cursor_visible;
                     cx.notify();

@@ -2492,7 +2492,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
                 state.background_effects = Some(background_effects);
             }
 
-            // zedterm patch (KWin workaround): the protocol defines the blur
+            // zzy patch (KWin workaround): the protocol defines the blur
             // region in surface-local coordinates, which is what upstream sends,
             // but KWin 6.8 applies it relative to the window geometry, which
             // already excludes the client-side decoration inset. The blur was
