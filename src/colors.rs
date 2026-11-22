@@ -54,8 +54,25 @@ impl Palette {
         }
     }
 
+    /// Color for text with the DIM attribute (SGR 2), following alacritty:
+    /// named and base-8 colors use their dim palette entry, anything else is
+    /// blended toward the background.
+    fn resolve_dim(&self, color: &ansi::Color) -> Rgba {
+        match color {
+            ansi::Color::Named(name) => self.resolve(&ansi::Color::Named(name.to_dim())),
+            ansi::Color::Indexed(idx) if (*idx as usize) < DIMS.len() => {
+                self.resolve(&ansi::Color::Named(DIMS[*idx as usize]))
+            }
+            _ => dim(self.resolve(color), self.default_bg),
+        }
+    }
+
     pub(crate) fn fg_bg(&self, cell: &Cell) -> (Rgba, Rgba) {
-        let mut fg = self.resolve(&cell.fg);
+        let mut fg = if cell.flags.contains(Flags::DIM) {
+            self.resolve_dim(&cell.fg)
+        } else {
+            self.resolve(&cell.fg)
+        };
         let mut bg = self.resolve(&cell.bg);
         if cell.flags.contains(Flags::INVERSE) {
             std::mem::swap(&mut fg, &mut bg);
@@ -77,26 +94,25 @@ impl Palette {
     fn apply_theme_overrides(&mut self, theme: &ThemeOverrides) {
         use ansi::NamedColor::*;
 
+        let bg = rgba_hex(theme.default_bg);
         for name in [Foreground, BrightForeground, Cursor] {
             self.set_named(name, theme.default_fg);
         }
         self.set_named(Background, theme.default_bg);
+        // Dim variants default to the base colors faded toward the background.
+        for (name, &hex) in DIMS.into_iter().zip(&theme.indexed) {
+            self.resolved[name as usize] = Some(dim(rgba_hex(hex), bg));
+        }
+        self.resolved[DimForeground as usize] = Some(dim(rgba_hex(theme.default_fg), bg));
+        // Theme-specific colors win over the defaults above.
         for &(name, hex) in theme.named {
             self.set_named(name, hex);
         }
-        // The base 16 and their dim variants always follow `indexed`, even when
-        // `named` lists them. Named colors Black..=BrightWhite share slots 0..16
-        // with the indexed palette.
+        // The base 16 always follow `indexed`. Named colors Black..=BrightWhite
+        // share slots 0..16 with the indexed palette.
         for (slot, &hex) in theme.indexed.iter().enumerate() {
             self.resolved[slot] = Some(rgba_hex(hex));
         }
-        let dims = [
-            DimBlack, DimRed, DimGreen, DimYellow, DimBlue, DimMagenta, DimCyan, DimWhite,
-        ];
-        for (name, &hex) in dims.into_iter().zip(&theme.indexed) {
-            self.set_named(name, hex);
-        }
-        self.set_named(DimForeground, theme.default_fg);
     }
 
     fn set_named(&mut self, name: ansi::NamedColor, hex: u32) {
@@ -109,6 +125,30 @@ impl Palette {
             16..=231 => to_rgba(color_cube(idx)),
             _ => to_rgba(grayscale(idx)),
         }
+    }
+}
+
+const DIMS: [ansi::NamedColor; 8] = [
+    ansi::NamedColor::DimBlack,
+    ansi::NamedColor::DimRed,
+    ansi::NamedColor::DimGreen,
+    ansi::NamedColor::DimYellow,
+    ansi::NamedColor::DimBlue,
+    ansi::NamedColor::DimMagenta,
+    ansi::NamedColor::DimCyan,
+    ansi::NamedColor::DimWhite,
+];
+
+/// How much of the original color a dimmed color keeps (alacritty uses 0.66).
+const DIM_FACTOR: f32 = 0.66;
+
+fn dim(color: Rgba, bg: Rgba) -> Rgba {
+    let mix = |c: f32, b: f32| c * DIM_FACTOR + b * (1.0 - DIM_FACTOR);
+    Rgba {
+        r: mix(color.r, bg.r),
+        g: mix(color.g, bg.g),
+        b: mix(color.b, bg.b),
+        a: color.a,
     }
 }
 
@@ -166,33 +206,24 @@ const DEFAULT_THEME: ThemeOverrides = ThemeOverrides {
     named: &[
         (ansi::NamedColor::Foreground, 0xccccccff),
         (ansi::NamedColor::BrightForeground, 0xb3b3b3ff),
-        (ansi::NamedColor::DimForeground, 0x282c33ff),
         (ansi::NamedColor::Background, 0x00000000),
         (ansi::NamedColor::Cursor, 0x5c78e2ff),
         (ansi::NamedColor::Black, 0x282c33ff),
         (ansi::NamedColor::BrightBlack, 0x525561ff),
-        (ansi::NamedColor::DimBlack, 0xc8ccd4ff),
         (ansi::NamedColor::Red, 0xD34949ff),
         (ansi::NamedColor::BrightRed, 0xD34949ff),
-        (ansi::NamedColor::DimRed, 0xeab7b9ff),
         (ansi::NamedColor::Green, 0x88B292ff),
         (ansi::NamedColor::BrightGreen, 0x88B292ff),
-        (ansi::NamedColor::DimGreen, 0xd1e0bfff),
         (ansi::NamedColor::Yellow, 0xCB9484ff),
         (ansi::NamedColor::BrightYellow, 0xCB9484ff),
-        (ansi::NamedColor::DimYellow, 0xf1dfc1ff),
         (ansi::NamedColor::Blue, 0x7490BEff),
         (ansi::NamedColor::BrightBlue, 0x7490BEff),
-        (ansi::NamedColor::DimBlue, 0xbed5f4ff),
         (ansi::NamedColor::Magenta, 0x9A5061ff),
         (ansi::NamedColor::BrightMagenta, 0x9A5061ff),
-        (ansi::NamedColor::DimMagenta, 0xe6a79eff),
         (ansi::NamedColor::Cyan, 0x66A6B0ff),
         (ansi::NamedColor::BrightCyan, 0x66A6B0ff),
-        (ansi::NamedColor::DimCyan, 0xb9d9dfff),
         (ansi::NamedColor::White, 0xc8ccd4ff),
         (ansi::NamedColor::BrightWhite, 0xc8ccd4ff),
-        (ansi::NamedColor::DimWhite, 0x575d65ff),
     ],
     default_fg: 0xccccccff,
     default_bg: 0x161616ff,
