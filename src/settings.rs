@@ -1,15 +1,15 @@
 use crate::terminal::DEFAULT_FONT_SIZE;
 use crate::theme::ThemeChoice;
-use gpui::{
-    App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, Window,
-};
-use gpui_component::group_box::GroupBoxVariant;
-use gpui_component::setting::{
+use gpui_kit::component::group_box::GroupBoxVariant;
+use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage,
     Settings as SettingsPanel,
 };
-use gpui_component::v_flex;
+use gpui_kit::component::v_flex;
+use gpui_kit::{
+    App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, Styled, Window,
+};
 
 pub const DEFAULT_FONT_FAMILY: &str = "Adwaita Mono";
 
@@ -356,7 +356,7 @@ impl Render for SettingsView {
 }
 
 impl Focusable for SettingsView {
-    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
+    fn focus_handle(&self, _cx: &gpui_kit::App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }

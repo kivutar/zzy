@@ -4,13 +4,13 @@ mod terminal;
 mod theme;
 
 use colors::{theme_background, theme_foreground};
-use gpui::*;
-use gpui_component::{
+use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     tab::{Tab, TabBar},
     v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
 };
+use gpui_kit::*;
 use settings::{AppSettings, SettingsView};
 use terminal::TerminalView;
 
@@ -313,10 +313,10 @@ impl Render for ZedTerm {
 }
 
 fn main() {
-    let app = Application::new().with_assets(gpui_component_assets::Assets);
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
 
     app.run(move |cx| {
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         Theme::global_mut(cx).mode = ThemeMode::Dark;
         Theme::change(ThemeMode::Dark, None, cx);
         let border_color = Theme::global(cx).border;

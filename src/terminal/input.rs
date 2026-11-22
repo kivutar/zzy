@@ -1,6 +1,6 @@
 use super::{CellPosition, SelectionRange, TerminalView};
 use alacritty_terminal::{grid::Dimensions, index::Column, index::Line, term::cell::Flags};
-use gpui::{
+use gpui_kit::{
     ClipboardItem, Context, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Window,
 };
@@ -176,7 +176,7 @@ impl TerminalView {
 
     pub(crate) fn cell_position_from_point(
         &self,
-        position: gpui::Point<gpui::Pixels>,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
     ) -> Option<CellPosition> {
         let bounds = self.last_bounds?;
         let grid = self.term.grid();

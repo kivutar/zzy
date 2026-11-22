@@ -5,7 +5,7 @@ use alacritty_terminal::{
     },
     vte::ansi,
 };
-use gpui::Rgba;
+use gpui_kit::Rgba;
 
 #[derive(Clone, Copy)]
 pub(crate) struct ThemeOverrides {

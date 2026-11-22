@@ -12,7 +12,7 @@ use alacritty_terminal::{
     vte::ansi,
 };
 use futures::channel::mpsc;
-use gpui::{
+use gpui_kit::{
     font, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, Hsla, Point, Rgba, ScrollHandle,
     SharedString, Subscription, TextRun, WeakEntity, Window,
 };
@@ -36,7 +36,7 @@ pub struct TerminalView {
     cell_height: f32,
     scroll_handle: ScrollHandle,
     program_name: String,
-    last_bounds: Option<Bounds<gpui::Pixels>>,
+    last_bounds: Option<Bounds<gpui_kit::Pixels>>,
     title: Option<String>,
     error: Option<String>,
     keystroke_sub: Option<Subscription>,
@@ -295,7 +295,7 @@ impl TerminalView {
         cx.spawn(move |_view: WeakEntity<Self>, cx: &mut AsyncApp| {
             let view = view.clone();
             let mut app = cx.clone();
-            let mut last_offset: Option<Point<gpui::Pixels>> = None;
+            let mut last_offset: Option<Point<gpui_kit::Pixels>> = None;
             async move {
                 loop {
                     app.background_executor()
@@ -367,12 +367,12 @@ impl TerminalView {
         }
     }
 
-    fn record_bounds(&mut self, bounds: Bounds<gpui::Pixels>, cx: &mut Context<Self>) {
+    fn record_bounds(&mut self, bounds: Bounds<gpui_kit::Pixels>, cx: &mut Context<Self>) {
         self.last_bounds = Some(bounds);
         self.update_dimensions(bounds, cx);
     }
 
-    fn update_dimensions(&mut self, bounds: Bounds<gpui::Pixels>, cx: &mut Context<Self>) {
+    fn update_dimensions(&mut self, bounds: Bounds<gpui_kit::Pixels>, cx: &mut Context<Self>) {
         let width: f32 = bounds.size.width.into();
         let height: f32 = bounds.size.height.into();
 
@@ -416,7 +416,7 @@ impl TerminalView {
         let offset = self.scroll_handle.offset();
         let offset_y: f32 = offset.y.into();
         let max_offset = self.scroll_handle.max_offset();
-        let max_y: f32 = (-max_offset.height).into();
+        let max_y: f32 = (-max_offset.y).into();
 
         (offset_y - max_y).abs() < 1.0 || offset_y < max_y
     }
@@ -508,7 +508,7 @@ impl TerminalView {
 }
 
 impl Focusable for TerminalView {
-    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
+    fn focus_handle(&self, _cx: &gpui_kit::App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }

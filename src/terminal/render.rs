@@ -9,16 +9,16 @@ use alacritty_terminal::{
     term::Term,
     vte::ansi,
 };
-use gpui::prelude::FluentBuilder as _;
-use gpui::{
-    canvas, div, px, Context, FontWeight, InteractiveElement, IntoElement, Keystroke, MouseButton,
-    ParentElement, Render, ScrollWheelEvent, StatefulInteractiveElement, Styled, Window,
-};
-use gpui_component::{
+use gpui_kit::component::{
     h_flex,
     kbd::Kbd,
     menu::{ContextMenuExt, PopupMenuItem},
     v_flex, ActiveTheme,
+};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::{
+    canvas, div, px, Context, FontWeight, InteractiveElement, IntoElement, Keystroke, MouseButton,
+    ParentElement, Render, ScrollEvent, StatefulInteractiveElement, Styled, Window,
 };
 
 pub const DEFAULT_COLS: usize = 80;
@@ -38,7 +38,7 @@ impl TerminalView {
 
     pub(crate) fn handle_scroll_wheel(
         &mut self,
-        _event: &ScrollWheelEvent,
+        _event: &ScrollEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -65,7 +65,7 @@ impl TerminalView {
         let max_offset = self.scroll_handle.max_offset();
         let mut offset_y: f32 = (-offset.y).into();
         offset_y = offset_y.max(0.0);
-        let max_scroll_y: f32 = max_offset.height.into();
+        let max_scroll_y: f32 = max_offset.y.into();
         if max_scroll_y > f32::EPSILON {
             offset_y = offset_y.min(max_scroll_y);
         }
@@ -201,7 +201,11 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> impl IntoElement {
         self.update_cell_metrics(window, cx);
 
         let error = self.error.clone();
@@ -219,7 +223,7 @@ impl Render for TerminalView {
             let max_offset = self.scroll_handle.max_offset();
             self.last_bounds.and_then(|bounds| {
                 let viewport_height: f32 = bounds.size.height.into();
-                let scroll_max: f32 = max_offset.height.into();
+                let scroll_max: f32 = max_offset.y.into();
                 match self.scrollbar {
                     crate::settings::ScrollbarVisibility::Never => None,
                     crate::settings::ScrollbarVisibility::Auto
@@ -283,7 +287,7 @@ impl Render for TerminalView {
                     .overflow_y_scroll()
                     .scrollbar_width(px(8.0))
                     .track_scroll(&self.scroll_handle)
-                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                    .on_scroll(cx.listener(Self::handle_scroll_wheel))
                     .child(
                         canvas(
                             {
@@ -423,7 +427,7 @@ impl Render for TerminalView {
             container = container.child(scrollbar);
         }
 
-        let shortcut = |keystroke: &str| Keystroke::parse(keystroke).ok().map(Kbd::new);
+        let shortcut = |keystroke: &'static str| Keystroke::parse(keystroke).ok().map(Kbd::new);
 
         container.context_menu({
             let view = view.clone();

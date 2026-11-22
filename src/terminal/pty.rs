@@ -1,7 +1,7 @@
 use super::{TerminalMsg, TerminalView};
 use anyhow::Context as _;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{AsyncApp, Context, WeakEntity};
+use gpui_kit::{AsyncApp, Context, WeakEntity};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::{
     ffi::OsString,
