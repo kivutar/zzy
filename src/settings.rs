@@ -7,8 +7,8 @@ use gpui_kit::component::setting::{
 };
 use gpui_kit::component::v_flex;
 use gpui_kit::{
-    App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, Window,
+    App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, Window,
 };
 
 pub const DEFAULT_FONT_FAMILY: &str = "Adwaita Mono";
@@ -47,16 +47,6 @@ pub enum CursorShapeSetting {
     Underline,
 }
 
-impl CursorShapeSetting {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CursorShapeSetting::Block => "block",
-            CursorShapeSetting::Beam => "beam",
-            CursorShapeSetting::Underline => "underline",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollbarVisibility {
     Always,
@@ -64,15 +54,35 @@ pub enum ScrollbarVisibility {
     Never,
 }
 
-impl ScrollbarVisibility {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ScrollbarVisibility::Always => "always",
-            ScrollbarVisibility::Auto => "auto",
-            ScrollbarVisibility::Never => "never",
-        }
-    }
-}
+/// Dropdown entries: (value, key, label), in display order.
+type Choices<T> = &'static [(T, &'static str, &'static str)];
+
+const THEMES: Choices<ThemeChoice> = &[
+    (ThemeChoice::RosePine, "rose-pine", "Rosé Pine"),
+    (ThemeChoice::Dracula, "dracula", "Dracula"),
+    (ThemeChoice::GruvboxDark, "gruvbox-dark", "Gruvbox Dark"),
+    (
+        ThemeChoice::HamiMelonDark,
+        "hami-melon-dark",
+        "Hami Melon Dark",
+    ),
+    (ThemeChoice::AyuDark, "ayu-dark", "Ayu Dark"),
+];
+
+const CURSOR_SHAPES: Choices<CursorShapeSetting> = &[
+    (CursorShapeSetting::Block, "block", "Block"),
+    (CursorShapeSetting::Beam, "beam", "Beam"),
+    (CursorShapeSetting::Underline, "underline", "Underline"),
+];
+
+const SCROLLBARS: Choices<ScrollbarVisibility> = &[
+    (ScrollbarVisibility::Auto, "auto", "Auto"),
+    (ScrollbarVisibility::Always, "always", "Always"),
+    (ScrollbarVisibility::Never, "never", "Never"),
+];
+
+const FONT_SIZE_RANGE: (f64, f64) = (8.0, 72.0);
+const SCROLLBACK_RANGE: (f64, f64) = (0.0, 50_000.0);
 
 pub struct SettingsView {
     focus_handle: FocusHandle,
@@ -92,34 +102,106 @@ impl SettingsView {
     }
 }
 
+/// Getter/setter pair bound to one `AppSettings` field. The setter only
+/// notifies (and so only re-applies settings) when the value changes.
+fn bind<T: PartialEq + 'static>(
+    view: &Entity<SettingsView>,
+    get: fn(&AppSettings) -> T,
+    set: fn(&mut AppSettings, T),
+) -> (impl Fn(&App) -> T + 'static, impl Fn(T, &mut App) + 'static) {
+    let reader = view.clone();
+    let writer = view.clone();
+    (
+        move |cx: &App| get(&reader.read(cx).settings),
+        move |value: T, cx: &mut App| {
+            writer.update(cx, |view, cx| {
+                if get(&view.settings) != value {
+                    set(&mut view.settings, value);
+                    cx.notify();
+                }
+            })
+        },
+    )
+}
+
+fn dropdown<T: Copy + PartialEq + 'static>(
+    view: &Entity<SettingsView>,
+    choices: Choices<T>,
+    get: fn(&AppSettings) -> T,
+    set: fn(&mut AppSettings, T),
+) -> SettingField<SharedString> {
+    let fallback = get(&AppSettings::default());
+    let key_of = move |value: T| {
+        choices
+            .iter()
+            .find(|(v, ..)| *v == value)
+            .map_or(choices[0].1, |(_, key, _)| key)
+    };
+    let (read, write) = bind(view, get, set);
+    SettingField::dropdown(
+        choices
+            .iter()
+            .map(|(_, key, label)| ((*key).into(), (*label).into()))
+            .collect(),
+        move |cx: &App| key_of(read(cx)).into(),
+        move |key: SharedString, cx: &mut App| {
+            let value = choices
+                .iter()
+                .find(|(_, k, _)| *k == key.as_str())
+                .map_or(fallback, |(v, ..)| *v);
+            write(value, cx);
+        },
+    )
+    .default_value(key_of(fallback).to_string())
+}
+
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
-        let default_settings = AppSettings::default();
-        let min_font_size = 8.0;
-        let max_font_size = 72.0;
-        let font_size_options = NumberFieldOptions {
-            min: min_font_size,
-            max: max_font_size,
-            step: 1.0,
+        let defaults = AppSettings::default();
+
+        let font_family = {
+            let (read, write) = bind(&view, |s| s.font_family.clone(), |s, v| s.font_family = v);
+            SettingField::input(read, write).default_value(defaults.font_family.clone())
         };
-        let scrollbar_options = vec![
-            ("auto".into(), "Auto".into()),
-            ("always".into(), "Always".into()),
-            ("never".into(), "Never".into()),
-        ];
-        let cursor_shape_options = vec![
-            ("block".into(), "Block".into()),
-            ("beam".into(), "Beam".into()),
-            ("underline".into(), "Underline".into()),
-        ];
-        let theme_options = vec![
-            ("rose-pine".into(), "Rosé Pine".into()),
-            ("dracula".into(), "Dracula".into()),
-            ("gruvbox-dark".into(), "Gruvbox Dark".into()),
-            ("hami-melon-dark".into(), "Hami Melon Dark".into()),
-            ("ayu-dark".into(), "Ayu Dark".into()),
-        ];
+        let font_size = {
+            let (read, write) = bind(
+                &view,
+                |s| s.font_size as f64,
+                |s, v| s.font_size = v.clamp(FONT_SIZE_RANGE.0, FONT_SIZE_RANGE.1) as f32,
+            );
+            let options = NumberFieldOptions {
+                min: FONT_SIZE_RANGE.0,
+                max: FONT_SIZE_RANGE.1,
+                step: 1.0,
+            };
+            SettingField::number_input(options, read, write)
+                .default_value(defaults.font_size as f64)
+        };
+        let ignore_bold = {
+            let (read, write) = bind(&view, |s| s.ignore_bold, |s, v| s.ignore_bold = v);
+            SettingField::switch(read, write).default_value(defaults.ignore_bold)
+        };
+        let cursor_blink = {
+            let (read, write) = bind(&view, |s| s.cursor_blink, |s, v| s.cursor_blink = v);
+            SettingField::switch(read, write).default_value(defaults.cursor_blink)
+        };
+        let scrollback = {
+            let (read, write) = bind(
+                &view,
+                |s| s.scrollback as f64,
+                |s, v| {
+                    s.scrollback = v.clamp(SCROLLBACK_RANGE.0, SCROLLBACK_RANGE.1).round() as usize
+                },
+            );
+            let options = NumberFieldOptions {
+                min: SCROLLBACK_RANGE.0,
+                max: SCROLLBACK_RANGE.1,
+                step: 1000.0,
+            };
+            SettingField::number_input(options, read, write)
+                .default_value(defaults.scrollback as f64)
+        };
 
         v_flex()
             .p_neg_2()
@@ -130,225 +212,40 @@ impl Render for SettingsView {
                     .with_group_variant(GroupBoxVariant::Outline)
                     .pages(vec![SettingPage::new("Terminal")
                         .group(SettingGroup::new().title("Font").items(vec![
-                            SettingItem::new(
-                                "Font Family",
-                                SettingField::input(
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| view.read(cx).settings.font_family.clone()
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: SharedString, cx: &mut App| {
-                                            let _ = view.update(cx, |view, cx| {
-                                                if view.settings.font_family != val {
-                                                    view.settings.font_family = val;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.font_family.clone()),
-                            ),
-                            SettingItem::new(
-                                "Font Size",
-                                SettingField::number_input(
-                                    font_size_options,
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| view.read(cx).settings.font_size as f64
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: f64, cx: &mut App| {
-                                            let clamped = val.clamp(min_font_size, max_font_size);
-                                            let _ = view.update(cx, |view, cx| {
-                                                let clamped = clamped as f32;
-                                                if (view.settings.font_size - clamped).abs()
-                                                    > f32::EPSILON
-                                                {
-                                                    view.settings.font_size = clamped;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.font_size as f64),
-                            ),
-                            SettingItem::new(
-                                "Ignore Bold",
-                                SettingField::switch(
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| view.read(cx).settings.ignore_bold
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: bool, cx: &mut App| {
-                                            let _ = view.update(cx, |view, cx| {
-                                                if view.settings.ignore_bold != val {
-                                                    view.settings.ignore_bold = val;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.ignore_bold),
-                            ),
+                            SettingItem::new("Font Family", font_family),
+                            SettingItem::new("Font Size", font_size),
+                            SettingItem::new("Ignore Bold", ignore_bold),
                         ]))
-                        .group(SettingGroup::new().title("Theme").items(vec![
-                            SettingItem::new(
-                                "Color Theme",
-                                SettingField::dropdown(
-                                    theme_options,
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| {
-                                            SharedString::from(
-                                                view.read(cx).settings.theme.as_str(),
-                                            )
-                                        }
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: SharedString, cx: &mut App| {
-                                            let theme = match val.as_str() {
-                                                "rose-pine" => ThemeChoice::RosePine,
-                                                "dracula" => ThemeChoice::Dracula,
-                                                "gruvbox-dark" => ThemeChoice::GruvboxDark,
-                                                "ayu-dark" => ThemeChoice::AyuDark,
-                                                _ => ThemeChoice::HamiMelonDark,
-                                            };
-                                            let _ = view.update(cx, |view, cx| {
-                                                if view.settings.theme != theme {
-                                                    view.settings.theme = theme;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.theme.as_str().to_string()),
-                            ),
-                        ]))
+                        .group(
+                            SettingGroup::new()
+                                .title("Theme")
+                                .items(vec![SettingItem::new(
+                                    "Color Theme",
+                                    dropdown(&view, THEMES, |s| s.theme, |s, v| s.theme = v),
+                                )]),
+                        )
                         .group(SettingGroup::new().title("Cursor").items(vec![
-                                SettingItem::new(
-                                    "Cursor Blinking",
-                                    SettingField::switch(
-                                        {
-                                            let view = view.clone();
-                                            move |cx: &App| view.read(cx).settings.cursor_blink
-                                        },
-                                        {
-                                            let view = view.clone();
-                                            move |val: bool, cx: &mut App| {
-                                                let _ = view.update(cx, |view, cx| {
-                                                    if view.settings.cursor_blink != val {
-                                                        view.settings.cursor_blink = val;
-                                                        cx.notify();
-                                                    }
-                                                });
-                                            }
-                                        },
-                                    )
-                                    .default_value(default_settings.cursor_blink),
-                                ),
-                                SettingItem::new(
-                                    "Cursor Shape",
-                                    SettingField::dropdown(
-                                        cursor_shape_options,
-                                        {
-                                            let view = view.clone();
-                                            move |cx: &App| {
-                                                SharedString::from(
-                                                    view.read(cx).settings.cursor_shape.as_str(),
-                                                )
-                                            }
-                                        },
-                                        {
-                                            let view = view.clone();
-                                            move |val: SharedString, cx: &mut App| {
-                                                let shape = match val.as_str() {
-                                                    "beam" => CursorShapeSetting::Beam,
-                                                    "underline" => CursorShapeSetting::Underline,
-                                                    _ => CursorShapeSetting::Block,
-                                                };
-                                                let _ = view.update(cx, |view, cx| {
-                                                    if view.settings.cursor_shape != shape {
-                                                        view.settings.cursor_shape = shape;
-                                                        cx.notify();
-                                                    }
-                                                });
-                                            }
-                                        },
-                                    )
-                                    .default_value(
-                                        default_settings.cursor_shape.as_str().to_string(),
-                                    ),
-                                ),
-                            ]))
-                        .group(SettingGroup::new().title("History").items(vec![
+                            SettingItem::new("Cursor Blinking", cursor_blink),
                             SettingItem::new(
-                                "Scrollback Lines",
-                                SettingField::number_input(
-                                    NumberFieldOptions {
-                                        min: 0.0,
-                                        max: 50_000.0,
-                                        step: 1000.0,
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| view.read(cx).settings.scrollback as f64
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: f64, cx: &mut App| {
-                                            let clamped = val.clamp(0.0, 50_000.0);
-                                            let lines = clamped.round() as usize;
-                                            let _ = view.update(cx, |view, cx| {
-                                                if view.settings.scrollback != lines {
-                                                    view.settings.scrollback = lines;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.scrollback as f64),
+                                "Cursor Shape",
+                                dropdown(
+                                    &view,
+                                    CURSOR_SHAPES,
+                                    |s| s.cursor_shape,
+                                    |s, v| s.cursor_shape = v,
+                                ),
                             ),
+                        ]))
+                        .group(SettingGroup::new().title("History").items(vec![
+                            SettingItem::new("Scrollback Lines", scrollback),
                             SettingItem::new(
                                 "Scrollbar",
-                                SettingField::dropdown(
-                                    scrollbar_options,
-                                    {
-                                        let view = view.clone();
-                                        move |cx: &App| {
-                                            SharedString::from(
-                                                view.read(cx).settings.scrollbar.as_str(),
-                                            )
-                                        }
-                                    },
-                                    {
-                                        let view = view.clone();
-                                        move |val: SharedString, cx: &mut App| {
-                                            let visibility = match val.as_str() {
-                                                "always" => ScrollbarVisibility::Always,
-                                                "never" => ScrollbarVisibility::Never,
-                                                _ => ScrollbarVisibility::Auto,
-                                            };
-                                            let _ = view.update(cx, |view, cx| {
-                                                if view.settings.scrollbar != visibility {
-                                                    view.settings.scrollbar = visibility;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    },
-                                )
-                                .default_value(default_settings.scrollbar.as_str().to_string()),
+                                dropdown(
+                                    &view,
+                                    SCROLLBARS,
+                                    |s| s.scrollbar,
+                                    |s, v| s.scrollbar = v,
+                                ),
                             ),
                         ]))]),
             )
@@ -356,7 +253,7 @@ impl Render for SettingsView {
 }
 
 impl Focusable for SettingsView {
-    fn focus_handle(&self, _cx: &gpui_kit::App) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }

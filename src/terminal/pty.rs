@@ -1,7 +1,7 @@
 use super::{TerminalMsg, TerminalView};
 use anyhow::Context as _;
 use futures::{channel::mpsc, StreamExt};
-use gpui_kit::{AsyncApp, Context, WeakEntity};
+use gpui_kit::Context;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::{
     ffi::OsString,
@@ -77,37 +77,32 @@ impl TerminalView {
     ) {
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if tx
-                            .unbounded_send(TerminalMsg::Output(buf[..n].to_vec()))
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!("pty read error: {err:?}");
-                        break;
-                    }
+            // Linux reports the slave side closing (shell exited) as EIO, so
+            // both EOF and errors mean the session is over.
+            while let Ok(n @ 1..) = reader.read(&mut buf) {
+                if tx
+                    .unbounded_send(TerminalMsg::Output(buf[..n].to_vec()))
+                    .is_err()
+                {
+                    return;
                 }
             }
+            let _ = tx.unbounded_send(TerminalMsg::Exited);
         });
     }
 
     pub(crate) fn spawn_message_loop(
         &self,
-        rx: mpsc::UnboundedReceiver<TerminalMsg>,
+        mut rx: mpsc::UnboundedReceiver<TerminalMsg>,
         cx: &mut Context<Self>,
     ) {
-        cx.spawn(|view: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let mut rx = rx;
-            let mut app = cx.clone();
-            async move {
-                while let Some(msg) = rx.next().await {
-                    let _ = view.update(&mut app, |view, cx| view.handle_msg(msg, cx));
+        cx.spawn(async move |view, cx| {
+            while let Some(msg) = rx.next().await {
+                if view
+                    .update(cx, |view, cx| view.handle_msg(msg, cx))
+                    .is_err()
+                {
+                    break;
                 }
             }
         })

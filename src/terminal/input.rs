@@ -1,5 +1,9 @@
 use super::{CellPosition, SelectionRange, TerminalView};
-use alacritty_terminal::{grid::Dimensions, index::Column, index::Line, term::cell::Flags};
+use alacritty_terminal::{
+    grid::Dimensions,
+    index::{Column, Line},
+    term::{cell::Flags, TermMode},
+};
 use gpui_kit::{
     ClipboardItem, Context, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Window,
@@ -12,44 +16,35 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.keystroke.key.eq_ignore_ascii_case("v")
-            && event.keystroke.modifiers.control
-            && event.keystroke.modifiers.shift
-        {
-            self.paste_from_clipboard(cx);
-            cx.stop_propagation();
-            return;
-        }
-
-        if event.keystroke.key.eq_ignore_ascii_case("a")
-            && event.keystroke.modifiers.control
-            && event.keystroke.modifiers.shift
-        {
-            if self.select_all() {
-                cx.notify();
+        let keystroke = &event.keystroke;
+        if keystroke.modifiers.control && keystroke.modifiers.shift {
+            let handled = match keystroke.key.to_ascii_lowercase().as_str() {
+                "c" => {
+                    self.copy_selection_to_clipboard(cx);
+                    true
+                }
+                "v" => {
+                    self.paste_from_clipboard(cx);
+                    true
+                }
+                "a" => {
+                    if self.select_all() {
+                        cx.notify();
+                    }
+                    true
+                }
+                "d" => {
+                    if self.clear_selection() {
+                        cx.notify();
+                    }
+                    true
+                }
+                _ => false,
+            };
+            if handled {
+                cx.stop_propagation();
+                return;
             }
-            cx.stop_propagation();
-            return;
-        }
-
-        if event.keystroke.key.eq_ignore_ascii_case("d")
-            && event.keystroke.modifiers.control
-            && event.keystroke.modifiers.shift
-        {
-            if self.clear_selection() {
-                cx.notify();
-            }
-            cx.stop_propagation();
-            return;
-        }
-
-        if event.keystroke.key.eq_ignore_ascii_case("c")
-            && event.keystroke.modifiers.control
-            && event.keystroke.modifiers.shift
-        {
-            self.copy_selection_to_clipboard(cx);
-            cx.stop_propagation();
-            return;
         }
 
         // Prevent focus traversal (Root binds Tab/Shift-Tab) so Tab can flow to the PTY.
@@ -57,7 +52,8 @@ impl TerminalView {
             cx.stop_propagation();
         }
 
-        if let Some(bytes) = keystroke_to_bytes(&event.keystroke) {
+        let app_cursor = self.term.mode().contains(TermMode::APP_CURSOR);
+        if let Some(bytes) = keystroke_to_bytes(keystroke, app_cursor) {
             self.cursor_visible = true;
             self.scroll_to_bottom_for_input(cx);
             self.write_bytes(&bytes);
@@ -166,7 +162,17 @@ impl TerminalView {
             if let Some(text) = item.text() {
                 self.cursor_visible = true;
                 self.scroll_to_bottom_for_input(cx);
-                self.write_bytes(text.as_bytes());
+                // Shells execute on CR, not LF; bracketed paste lets them tell
+                // pasted text from typed text so multi-line pastes don't run.
+                let text = text.replace("\r\n", "\r").replace('\n', "\r");
+                if self.term.mode().contains(TermMode::BRACKETED_PASTE) {
+                    let text = text.replace("\x1b[201~", "");
+                    self.write_bytes(b"\x1b[200~");
+                    self.write_bytes(text.as_bytes());
+                    self.write_bytes(b"\x1b[201~");
+                } else {
+                    self.write_bytes(text.as_bytes());
+                }
                 return true;
             }
         }
@@ -272,7 +278,7 @@ impl TerminalView {
         let screen_lines = grid_ref.screen_lines();
         let history_size = total_lines.saturating_sub(screen_lines);
 
-        let mut lines = Vec::new();
+        let mut text = String::new();
         for line_idx in selection.start.line..=selection.end.line {
             let grid_line = Line(line_idx as i32 - history_size as i32);
             let line_start_col = if line_idx == selection.start.line {
@@ -310,10 +316,22 @@ impl TerminalView {
                 }
             }
 
-            lines.push(line.trim_end().to_string());
+            // Soft-wrapped lines are one logical line: join them unchanged.
+            let wrapped = line_idx < selection.end.line
+                && grid_ref[grid_line][Column(columns - 1)]
+                    .flags
+                    .contains(Flags::WRAPLINE);
+            if wrapped {
+                text.push_str(&line);
+            } else {
+                text.push_str(line.trim_end());
+                if line_idx < selection.end.line {
+                    text.push('\n');
+                }
+            }
         }
 
-        Some(lines.join("\n"))
+        Some(text)
     }
 
     pub(crate) fn clear_selection(&mut self) -> bool {
@@ -426,33 +444,67 @@ impl TerminalView {
     }
 }
 
-fn keystroke_to_bytes(keystroke: &Keystroke) -> Option<Vec<u8>> {
-    if let Some(text) = &keystroke.key_char {
-        return Some(text.clone().into_bytes());
-    }
-
-    if keystroke.modifiers.control && keystroke.key.len() == 1 {
-        let ch = keystroke.key.chars().next().unwrap().to_ascii_lowercase();
-        if ('a'..='z').contains(&ch) {
-            return Some(vec![(ch as u8 - b'a' + 1)]);
+fn keystroke_to_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
+    let mods = &keystroke.modifiers;
+    let mut bytes = if let Some(text) = keystroke.key_char.as_ref().filter(|_| !mods.control) {
+        text.clone().into_bytes()
+    } else if mods.control && keystroke.key.len() == 1 {
+        match keystroke.key.as_bytes()[0].to_ascii_lowercase() {
+            ch @ b'a'..=b'z' => vec![ch - b'a' + 1],
+            b'[' => vec![0x1b],
+            b'\\' => vec![0x1c],
+            b']' => vec![0x1d],
+            _ => return None,
         }
+    } else if mods.alt && keystroke.key.chars().count() == 1 {
+        keystroke.key.clone().into_bytes()
+    } else {
+        // SS3 in application cursor mode (vim, less, htop...), CSI otherwise.
+        let cursor = |c: u8| {
+            let prefix: &[u8] = if app_cursor { b"\x1bO" } else { b"\x1b[" };
+            [prefix, &[c]].concat()
+        };
+        match keystroke.key.as_str() {
+            "enter" => b"\r".to_vec(),
+            "tab" => b"\t".to_vec(),
+            "space" if mods.control => vec![0],
+            "space" => b" ".to_vec(),
+            "backspace" => vec![0x7f],
+            "escape" => vec![0x1b],
+            "up" => cursor(b'A'),
+            "down" => cursor(b'B'),
+            "right" => cursor(b'C'),
+            "left" => cursor(b'D'),
+            "home" => cursor(b'H'),
+            "end" => cursor(b'F'),
+            "pageup" => b"\x1b[5~".to_vec(),
+            "pagedown" => b"\x1b[6~".to_vec(),
+            "delete" => b"\x1b[3~".to_vec(),
+            _ => return None,
+        }
+    };
+    // Alt sends ESC-prefixed keys (meta), e.g. Alt+B / Alt+F word motions.
+    if mods.alt {
+        bytes.insert(0, 0x1b);
+    }
+    Some(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keystroke_to_bytes;
+    use gpui_kit::Keystroke;
+
+    fn bytes(keys: &'static str, app_cursor: bool) -> Option<Vec<u8>> {
+        keystroke_to_bytes(&Keystroke::parse(keys).unwrap(), app_cursor)
     }
 
-    match keystroke.key.as_str() {
-        "enter" => Some(b"\r".to_vec()),
-        "tab" => Some(b"\t".to_vec()),
-        "space" => Some(b" ".to_vec()),
-        "backspace" => Some(vec![0x7f]),
-        "escape" => Some(vec![0x1b]),
-        "up" => Some(b"\x1b[A".to_vec()),
-        "down" => Some(b"\x1b[B".to_vec()),
-        "right" => Some(b"\x1b[C".to_vec()),
-        "left" => Some(b"\x1b[D".to_vec()),
-        "home" => Some(b"\x1b[H".to_vec()),
-        "end" => Some(b"\x1b[F".to_vec()),
-        "pageup" => Some(b"\x1b[5~".to_vec()),
-        "pagedown" => Some(b"\x1b[6~".to_vec()),
-        "delete" => Some(b"\x1b[3~".to_vec()),
-        _ => None,
+    #[test]
+    fn encodes_keys() {
+        assert_eq!(bytes("ctrl-c", false), Some(vec![3]));
+        assert_eq!(bytes("alt-b", false), Some(b"\x1bb".to_vec()));
+        assert_eq!(bytes("up", false), Some(b"\x1b[A".to_vec()));
+        assert_eq!(bytes("up", true), Some(b"\x1bOA".to_vec()));
+        assert_eq!(bytes("enter", false), Some(b"\r".to_vec()));
     }
 }

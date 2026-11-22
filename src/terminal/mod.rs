@@ -13,8 +13,8 @@ use alacritty_terminal::{
 };
 use futures::channel::mpsc;
 use gpui_kit::{
-    font, px, AsyncApp, Bounds, Context, FocusHandle, Focusable, Hsla, Point, Rgba, ScrollHandle,
-    SharedString, Subscription, TextRun, WeakEntity, Window,
+    font, px, Bounds, Context, EventEmitter, FocusHandle, Focusable, Hsla, Rgba, ScrollHandle,
+    SharedString, Subscription, TextRun, Window,
 };
 use parking_lot::Mutex;
 use portable_pty::{Child, MasterPty};
@@ -48,7 +48,6 @@ pub struct TerminalView {
     selection_started_with_single_click: bool,
     selection_dragged: bool,
     cursor_blink_enabled: bool,
-    cursor_shape: ansi::CursorShape,
     ignore_bold: bool,
     config: Config,
     scrollbar: ScrollbarVisibility,
@@ -72,7 +71,14 @@ struct TerminalEventProxy {
 pub(crate) enum TerminalMsg {
     Output(Vec<u8>),
     Event(Event),
+    /// The PTY reader hit EOF/error: the shell is gone.
+    Exited,
 }
+
+/// Emitted when the shell process exits, so the owner can close the tab.
+pub struct TerminalExited;
+
+impl EventEmitter<TerminalExited> for TerminalView {}
 
 pub(crate) struct BufferSnapshot {
     segments_by_line: Vec<Vec<CellRender>>,
@@ -127,15 +133,7 @@ impl TerminalView {
         let focus_handle = cx.focus_handle();
         let (tx, rx) = mpsc::unbounded();
         let proxy = TerminalEventProxy { tx: tx.clone() };
-        let cursor_shape = cursor_shape_from_settings(settings);
-        let config = Config {
-            scrolling_history: settings.scrollback,
-            default_cursor_style: ansi::CursorStyle {
-                shape: cursor_shape,
-                blinking: settings.cursor_blink,
-            },
-            ..Config::default()
-        };
+        let config = config_from_settings(settings);
         let term = Term::new(
             config.clone(),
             &SimpleDimensions::new(render::DEFAULT_COLS, render::DEFAULT_ROWS),
@@ -178,7 +176,6 @@ impl TerminalView {
             selection_started_with_single_click: false,
             selection_dragged: false,
             cursor_blink_enabled: settings.cursor_blink,
-            cursor_shape,
             ignore_bold: settings.ignore_bold,
             config,
             scrollbar: settings.scrollbar,
@@ -188,7 +185,6 @@ impl TerminalView {
         view.install_tab_passthrough(cx);
         view.spawn_message_loop(rx, cx);
         view.start_pty(tx, cx);
-        view.apply_cursor_shape(cursor_shape);
         view.start_cursor_blink(cx);
         view.start_scroll_invalidation(cx);
         view
@@ -231,6 +227,7 @@ impl TerminalView {
                 cx.notify();
             }
             TerminalMsg::Event(event) => self.handle_event(event, cx),
+            TerminalMsg::Exited => cx.emit(TerminalExited),
         }
     }
 
@@ -251,72 +248,48 @@ impl TerminalView {
             Event::ResetTitle => {
                 self.title = None;
             }
-            Event::ChildExit(code) => {
-                self.error
-                    .get_or_insert_with(|| format!("Process exited with code {code}"));
-            }
-            Event::Wakeup => cx.notify(),
             _ => {}
         }
         cx.notify();
     }
 
     fn start_cursor_blink(&mut self, cx: &mut Context<Self>) {
-        let view = cx.entity().downgrade();
-        cx.spawn(move |_view: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let view = view.clone();
-            let mut app = cx.clone();
-            async move {
-                loop {
-                    app.background_executor()
-                        .timer(Duration::from_millis(530))
-                        .await;
-                    if view
-                        .update(&mut app, |view, cx| {
-                            if view.cursor_blink_enabled {
-                                view.cursor_visible = !view.cursor_visible;
-                            } else {
-                                view.cursor_visible = true;
-                            }
-                            cx.notify();
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
+        cx.spawn(async move |view, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(530))
+                .await;
+            let alive = view.update(cx, |view, cx| {
+                if view.cursor_blink_enabled {
+                    view.cursor_visible = !view.cursor_visible;
+                    cx.notify();
                 }
+            });
+            if alive.is_err() {
+                break;
             }
         })
         .detach();
     }
 
+    /// We virtualize the terminal buffer and `ScrollHandle::scroll_to_bottom`
+    /// only lands on the next layout, so poll the offset and re-render when it
+    /// moves to keep the visible slice in sync.
     fn start_scroll_invalidation(&mut self, cx: &mut Context<Self>) {
-        let view = cx.entity().downgrade();
-        cx.spawn(move |_view: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let view = view.clone();
-            let mut app = cx.clone();
-            let mut last_offset: Option<Point<gpui_kit::Pixels>> = None;
-            async move {
-                loop {
-                    app.background_executor()
-                        .timer(Duration::from_millis(16))
-                        .await;
-                    if view
-                        .update(&mut app, |view, cx| {
-                            // We virtualize the terminal buffer; if scroll offset changes outside wheel
-                            // events (e.g., scrollbar drag or programmatic scroll), force a redraw so
-                            // the visible slice updates immediately.
-                            let offset = view.scroll_handle.offset();
-                            let changed = last_offset.map_or(true, |last| last != offset);
-                            if changed {
-                                last_offset = Some(offset);
-                                cx.notify();
-                            }
-                        })
-                        .is_err()
-                    {
-                        break;
+        cx.spawn(async move |view, cx| {
+            let mut last_offset = None;
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(16))
+                    .await;
+                let alive = view.update(cx, |view, cx| {
+                    let offset = view.scroll_handle.offset();
+                    if last_offset != Some(offset) {
+                        last_offset = Some(offset);
+                        cx.notify();
                     }
+                });
+                if alive.is_err() {
+                    break;
                 }
             }
         })
@@ -441,16 +414,8 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if (self.font_size - settings.font_size).abs() > f32::EPSILON {
+        if self.font_size != settings.font_size || self.font_family != settings.font_family {
             self.font_size = settings.font_size;
-            self.cell_metrics_measured = false;
-            self.update_cell_metrics(window, cx);
-            if let Some(bounds) = self.last_bounds {
-                self.update_dimensions(bounds, cx);
-            }
-        }
-
-        if self.font_family != settings.font_family {
             self.font_family = settings.font_family.clone();
             self.cell_metrics_measured = false;
             self.update_cell_metrics(window, cx);
@@ -464,46 +429,20 @@ impl TerminalView {
             self.cursor_visible = true;
         }
 
-        self.config.default_cursor_style.blinking = settings.cursor_blink;
-        self.config.default_cursor_style.shape = self.cursor_shape;
-
-        let shape = cursor_shape_from_settings(settings);
-        if self.cursor_shape != shape {
-            self.apply_cursor_shape(shape);
-            cx.notify();
+        // The configured cursor is the terminal's *default* style: programs can
+        // still override it (DECSCUSR) and resetting goes back to this one.
+        let config = config_from_settings(settings);
+        if config.scrolling_history != self.config.scrolling_history
+            || config.default_cursor_style != self.config.default_cursor_style
+        {
+            self.term.set_options(config.clone());
+            self.config = config;
         }
 
-        if self.ignore_bold != settings.ignore_bold {
-            self.ignore_bold = settings.ignore_bold;
-            cx.notify();
-        }
-
-        if self.config.scrolling_history != settings.scrollback {
-            self.config.scrolling_history = settings.scrollback;
-            self.term.set_options(self.config.clone());
-        }
-
-        if self.scrollbar != settings.scrollbar {
-            self.scrollbar = settings.scrollbar;
-            cx.notify();
-        }
-
-        if self.theme != settings.theme {
-            self.theme = settings.theme;
-            cx.notify();
-        }
-    }
-
-    fn apply_cursor_shape(&mut self, shape: ansi::CursorShape) {
-        self.cursor_shape = shape;
-        self.config.default_cursor_style.shape = shape;
-        let code = match shape {
-            ansi::CursorShape::Underline => 4,
-            ansi::CursorShape::Beam => 6,
-            _ => 2,
-        };
-        let seq = format!("\u{1b}[{code} q");
-        self.parser.advance(&mut self.term, seq.as_bytes());
+        self.ignore_bold = settings.ignore_bold;
+        self.scrollbar = settings.scrollbar;
+        self.theme = settings.theme;
+        cx.notify();
     }
 }
 
@@ -565,6 +504,17 @@ mod tests {
             }),
             ansi::CursorShape::Underline
         );
+    }
+}
+
+fn config_from_settings(settings: &AppSettings) -> Config {
+    Config {
+        scrolling_history: settings.scrollback,
+        default_cursor_style: ansi::CursorStyle {
+            shape: cursor_shape_from_settings(settings),
+            blinking: settings.cursor_blink,
+        },
+        ..Config::default()
     }
 }
 

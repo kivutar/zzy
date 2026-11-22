@@ -12,7 +12,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 use settings::{AppSettings, SettingsView};
-use terminal::TerminalView;
+use terminal::{TerminalExited, TerminalView};
 
 pub struct ZedTerm {
     tabs: Vec<TabContent>,
@@ -76,6 +76,16 @@ impl ZedTerm {
         cx.observe(&terminal, |_zedterm, _terminal, cx| {
             // Propagate terminal changes (e.g., title updates) to the tab bar.
             cx.notify();
+        })
+        .detach();
+        cx.subscribe(&terminal, |zedterm, terminal, _: &TerminalExited, cx| {
+            let index = zedterm
+                .tabs
+                .iter()
+                .position(|tab| matches!(tab, TabContent::Terminal(t) if *t == terminal));
+            if let Some(index) = index {
+                zedterm.close_tab(index, cx);
+            }
         })
         .detach();
         self.tabs.push(TabContent::Terminal(terminal));

@@ -1,6 +1,6 @@
 use super::{BufferSnapshot, TerminalEventProxy, TerminalView};
-use crate::colors::palette_for;
-use crate::colors::Palette;
+use crate::colors::{palette_for, Palette};
+use crate::settings::ScrollbarVisibility;
 use crate::theme::ThemeChoice;
 use alacritty_terminal::{
     grid::Dimensions,
@@ -34,15 +34,6 @@ impl TerminalView {
             (0, total)
         });
         Self::buffer_segments_for_term(&self.term, self.theme, start_line, end_line)
-    }
-
-    pub(crate) fn handle_scroll_wheel(
-        &mut self,
-        _event: &ScrollEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.notify();
     }
 
     fn visible_line_range(&self) -> Option<(usize, usize)> {
@@ -201,72 +192,134 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    fn render(
-        &mut self,
-        window: &mut Window,
-        cx: &mut gpui_kit::Context<Self>,
-    ) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_cell_metrics(window, cx);
 
-        let error = self.error.clone();
         let buffer = self.buffer_segments();
-        self.cursor_shape = buffer.cursor_shape;
         let palette = buffer.palette;
         let cursor_shape = buffer.cursor_shape;
-        let cursor_position = buffer.cursor_position;
+        let block_cursor = matches!(
+            cursor_shape,
+            ansi::CursorShape::Block | ansi::CursorShape::HollowBlock
+        );
+        let cursor_position = buffer.cursor_position.filter(|_| self.cursor_visible);
         let selection = self.selection_range();
-        let total_height = buffer.total_lines as f32 * self.cell_height;
-        let top_padding = buffer.start_line as f32 * self.cell_height;
-        let visible_height = buffer.segments_by_line.len() as f32 * self.cell_height;
+        let cell_height = self.cell_height;
+        let total_height = buffer.total_lines as f32 * cell_height;
+        let top_padding = buffer.start_line as f32 * cell_height;
+        let visible_height = buffer.segments_by_line.len() as f32 * cell_height;
         let bottom_padding = (total_height - top_padding - visible_height).max(0.0);
-        let scrollbar = {
-            let max_offset = self.scroll_handle.max_offset();
-            self.last_bounds.and_then(|bounds| {
-                let viewport_height: f32 = bounds.size.height.into();
-                let scroll_max: f32 = max_offset.y.into();
-                match self.scrollbar {
-                    crate::settings::ScrollbarVisibility::Never => None,
-                    crate::settings::ScrollbarVisibility::Auto
-                        if scroll_max <= 0.5 || viewport_height <= 0.5 =>
-                    {
-                        None
-                    }
-                    _ => {
-                        let effective_scroll_max = scroll_max.max(0.0);
-                        let content_height = viewport_height + effective_scroll_max;
-                        let thumb_height = (viewport_height / content_height * viewport_height)
-                            .clamp(20.0, viewport_height);
-                        let track_height = (viewport_height - thumb_height).max(0.0);
-                        let offset_y: f32 = (-self.scroll_handle.offset().y).into();
-                        let progress = if effective_scroll_max.abs() < f32::EPSILON {
-                            0.0
-                        } else {
-                            (offset_y / effective_scroll_max).clamp(0.0, 1.0)
-                        };
-                        let top = progress * track_height;
-
-                        Some(
-                            div()
-                                .absolute()
-                                .right(px(-4.0))
-                                .top(px(top))
-                                .w(px(8.0))
-                                .h(px(thumb_height))
-                                .rounded(px(4.0))
-                                .bg(cx.theme().border.alpha(0.65)),
-                        )
-                    }
-                }
-            })
-        };
-
         let view = cx.entity();
-        let mut container = div()
+
+        let mut lines_view = v_flex()
+            .id("terminal-lines")
+            .w_full()
+            .when_some(self.error.clone(), |this, err| this.child(div().child(err)))
+            .when(top_padding > 0.0, |this| {
+                this.child(div().h(px(top_padding)))
+            });
+
+        for (idx, segments) in buffer.segments_by_line.into_iter().enumerate() {
+            let line = buffer.start_line + idx;
+            let mut line_row = div().id(("line", line as u32)).relative().w_full();
+
+            // Painted first so it sits behind the text. Cells using the default
+            // background don't paint one (the container already does), so the
+            // highlight shows through them.
+            if let Some((left, width)) = selection
+                .as_ref()
+                .and_then(|range| self.selection_span_for_line(range, line, buffer.columns))
+            {
+                line_row = line_row.child(
+                    div()
+                        .absolute()
+                        .left(px(left))
+                        .top_0()
+                        .h(px(cell_height))
+                        .w(px(width))
+                        .bg(cx.theme().selection),
+                );
+            }
+
+            line_row = line_row.child(h_flex().children(segments.into_iter().map(|seg| {
+                let (fg, bg) = if seg.is_cursor && block_cursor && self.cursor_visible {
+                    (palette.cursor_color(), palette.cursor_bg())
+                } else {
+                    (seg.fg, seg.bg)
+                };
+                div()
+                    .when(seg.is_bold && !self.ignore_bold, |this| {
+                        this.font_weight(FontWeight::BOLD)
+                    })
+                    .text_color(fg)
+                    .when(bg != palette.default_bg, |this| this.bg(bg))
+                    .child(seg.text)
+            })));
+
+            // Thin cursors are drawn on top of the glyphs.
+            if let Some(pos) = cursor_position.filter(|pos| pos.line == line) {
+                let left = pos.column as f32 * self.cell_width;
+                let bar = match cursor_shape {
+                    ansi::CursorShape::Beam => {
+                        Some((left, 0.0, (self.cell_width * 0.15).max(2.0), cell_height))
+                    }
+                    ansi::CursorShape::Underline => {
+                        let height = (cell_height * 0.15).clamp(1.0, 3.0);
+                        Some((left, cell_height - height, self.cell_width, height))
+                    }
+                    _ => None,
+                };
+                if let Some((left, top, w, h)) = bar {
+                    line_row = line_row.child(
+                        div()
+                            .absolute()
+                            .left(px(left))
+                            .top(px(top))
+                            .w(px(w))
+                            .h(px(h))
+                            .bg(palette.cursor_bg()),
+                    );
+                }
+            }
+
+            lines_view = lines_view.child(line_row);
+        }
+        let lines_view = lines_view.when(bottom_padding > 0.0, |this| {
+            this.child(div().h(px(bottom_padding)))
+        });
+
+        let scroll_area = div()
+            .id("terminal-scroll")
+            .size_full()
+            .font_family(self.font_family.clone())
+            .text_size(px(self.font_size))
+            .line_height(px(cell_height))
+            .whitespace_nowrap()
+            .cursor_text()
+            .overflow_y_scroll()
+            .scrollbar_width(px(8.0))
+            .track_scroll(&self.scroll_handle)
+            .on_scroll(cx.listener(|_, _: &ScrollEvent, _, cx| cx.notify()))
+            .child(
+                canvas(
+                    {
+                        let view = view.clone();
+                        move |bounds, _, cx| {
+                            view.update(cx, |view, cx| view.record_bounds(bounds, cx));
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(lines_view);
+
+        div()
             .id("terminal-view")
             .bg(cx.theme().secondary)
             .flex_1()
-            .w_full()
-            .h_full()
+            .size_full()
             .relative()
             .track_focus(&self.focus_handle)
             .focusable()
@@ -274,261 +327,93 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
-            .child({
-                let scroll_area = div()
-                    .id("terminal-scroll")
-                    .w_full()
-                    .h_full()
-                    .font_family(self.font_family.clone())
-                    .text_size(px(self.font_size))
-                    .line_height(px(self.cell_height))
-                    .whitespace_nowrap()
-                    .cursor_text()
-                    .overflow_y_scroll()
-                    .scrollbar_width(px(8.0))
-                    .track_scroll(&self.scroll_handle)
-                    .on_scroll(cx.listener(Self::handle_scroll_wheel))
-                    .child(
-                        canvas(
-                            {
-                                let view = view.clone();
-                                move |bounds, _, cx| {
-                                    let _ =
-                                        view.update(cx, |view, cx| view.record_bounds(bounds, cx));
-                                }
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .size_full(),
-                    );
-
-                let mut lines_view = v_flex().id("terminal-lines").w_full();
-                if let Some(err) = error {
-                    lines_view = lines_view.child(
-                        div()
-                            .w_full()
-                            .whitespace_nowrap()
-                            .text_size(px(self.font_size))
-                            .line_height(px(self.cell_height))
-                            .font_family(self.font_family.clone())
-                            .child(err),
-                    );
-                }
-                if top_padding > 0.0 {
-                    lines_view = lines_view.child(div().w_full().h(px(top_padding)));
-                }
-                for (idx, segments) in buffer.segments_by_line.into_iter().enumerate() {
-                    let real_line = buffer.start_line + idx;
-                    let line_highlight = selection.as_ref().and_then(|range| {
-                        self.selection_span_for_line(range, real_line, buffer.columns)
-                    });
-                    let mut line_content = h_flex()
-                        .w_full()
-                        .whitespace_nowrap()
-                        .text_size(px(self.font_size))
-                        .line_height(px(self.cell_height))
-                        .font_family(self.font_family.clone());
-
-                    for seg in segments {
-                        let show_cursor = seg.is_cursor && self.cursor_visible;
-                        let is_block_cursor = matches!(
-                            cursor_shape,
-                            ansi::CursorShape::Block | ansi::CursorShape::HollowBlock
-                        );
-                        let text_color = if show_cursor && is_block_cursor {
-                            palette.cursor_color()
-                        } else {
-                            seg.fg
-                        };
-                        let bg_color = if show_cursor && is_block_cursor {
-                            palette.cursor_bg()
-                        } else {
-                            seg.bg
-                        };
-                        line_content = line_content.child(
-                            div()
-                                .whitespace_nowrap()
-                                .when(seg.is_bold && !self.ignore_bold, |this| {
-                                    this.font_weight(FontWeight::BOLD)
-                                })
-                                .text_color(text_color)
-                                .bg(bg_color)
-                                .child(seg.text),
-                        );
-                    }
-
-                    let mut line_row = div()
-                        .id(("line", real_line as u32))
-                        .relative()
-                        .w_full()
-                        .whitespace_nowrap()
-                        .text_size(px(self.font_size))
-                        .line_height(px(self.cell_height))
-                        .font_family(cx.theme().mono_font_family.clone());
-
-                    if let Some((left, width)) = line_highlight {
-                        line_row = line_row.child(
-                            div()
-                                .absolute()
-                                .left(px(left))
-                                .top(px(0.0))
-                                .h(px(self.cell_height))
-                                .w(px(width))
-                                .bg(cx.theme().selection),
-                        );
-                    }
-
-                    if let Some(pos) = cursor_position.filter(|pos| pos.line == real_line) {
-                        if self.cursor_visible {
-                            match cursor_shape {
-                                ansi::CursorShape::Beam => {
-                                    let width = (self.cell_width * 0.15).max(2.0);
-                                    let left = pos.column as f32 * self.cell_width;
-                                    line_row = line_row.child(
-                                        div()
-                                            .absolute()
-                                            .left(px(left))
-                                            .top(px(0.0))
-                                            .w(px(width))
-                                            .h(px(self.cell_height))
-                                            .bg(palette.cursor_bg()),
-                                    );
-                                }
-                                ansi::CursorShape::Underline => {
-                                    let height = (self.cell_height * 0.15).clamp(1.0, 3.0);
-                                    let left = pos.column as f32 * self.cell_width;
-                                    let top = self.cell_height - height;
-                                    line_row = line_row.child(
-                                        div()
-                                            .absolute()
-                                            .left(px(left))
-                                            .top(px(top))
-                                            .w(px(self.cell_width))
-                                            .h(px(height))
-                                            .bg(palette.cursor_bg()),
-                                    );
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-
-                    lines_view = lines_view.child(line_row.child(line_content));
-                }
-                if bottom_padding > 0.0 {
-                    lines_view = lines_view.child(div().w_full().h(px(bottom_padding)));
-                }
-
-                scroll_area.child(lines_view)
-            });
-
-        if let Some(scrollbar) = scrollbar {
-            container = container.child(scrollbar);
-        }
-
-        let shortcut = |keystroke: &'static str| Keystroke::parse(keystroke).ok().map(Kbd::new);
-
-        container.context_menu({
-            let view = view.clone();
-            move |menu, _window, cx| {
-                let (focus_handle, selection_available) = {
-                    let view_ref = view.read(cx);
-                    (view_ref.focus_handle.clone(), view_ref.has_selection())
+            .child(scroll_area)
+            .children(self.render_scrollbar(cx))
+            .context_menu(move |menu, _window, cx| {
+                let (focus_handle, has_selection) = {
+                    let view = view.read(cx);
+                    (view.focus_handle.clone(), view.has_selection())
                 };
                 let can_paste = cx
                     .read_from_clipboard()
                     .and_then(|item| item.text())
                     .is_some();
-                let copy_shortcut = shortcut("ctrl-shift-c");
-                let paste_shortcut = shortcut("ctrl-shift-v");
-                let select_all_shortcut = shortcut("ctrl-shift-a");
-                let select_none_shortcut = shortcut("ctrl-shift-d");
 
-                let build_row = |label: &'static str, shortcut: Option<Kbd>| {
-                    let mut row = h_flex()
-                        .w_full()
-                        .items_center()
-                        .justify_between()
-                        .child(label);
-                    if let Some(shortcut) = shortcut {
-                        row = row.child(shortcut);
-                    }
-                    row
-                };
-
-                let mut menu = menu.action_context(focus_handle);
-
-                menu = menu.item(
-                    PopupMenuItem::element({
-                        let shortcut = copy_shortcut.clone();
-                        move |_, _| build_row("Copy", shortcut.clone())
-                    })
-                    .on_click({
-                        let view = view.clone();
-                        move |_, _, cx| {
-                            let _ = view.update(cx, |view, cx| {
-                                view.copy_selection_to_clipboard(cx);
-                            });
-                        }
-                    })
-                    .disabled(!selection_available),
-                );
-
-                menu = menu.item(
-                    PopupMenuItem::element({
-                        let shortcut = paste_shortcut.clone();
-                        move |_, _| build_row("Paste", shortcut.clone())
-                    })
-                    .on_click({
-                        let view = view.clone();
-                        move |_, _, cx| {
-                            let _ = view.update(cx, |view, cx| {
-                                view.paste_from_clipboard(cx);
-                            });
-                        }
-                    })
-                    .disabled(!can_paste),
-                );
-
-                menu = menu.item(
-                    PopupMenuItem::element({
-                        let shortcut = select_all_shortcut.clone();
-                        move |_, _| build_row("Select All", shortcut.clone())
-                    })
-                    .on_click({
-                        let view = view.clone();
-                        move |_, _, cx| {
-                            let _ = view.update(cx, |view, cx| {
-                                if view.select_all() {
-                                    cx.notify();
-                                }
-                            });
+                type MenuAction = fn(&mut TerminalView, &mut Context<TerminalView>);
+                let items: [(&'static str, &'static str, bool, MenuAction); 4] = [
+                    ("Copy", "ctrl-shift-c", has_selection, |view, cx| {
+                        view.copy_selection_to_clipboard(cx);
+                    }),
+                    ("Paste", "ctrl-shift-v", can_paste, |view, cx| {
+                        view.paste_from_clipboard(cx);
+                    }),
+                    ("Select All", "ctrl-shift-a", true, |view, cx| {
+                        if view.select_all() {
+                            cx.notify();
                         }
                     }),
-                );
-
-                menu = menu.item(
-                    PopupMenuItem::element({
-                        let shortcut = select_none_shortcut.clone();
-                        move |_, _| build_row("Select None", shortcut.clone())
-                    })
-                    .on_click({
-                        let view = view.clone();
-                        move |_, _, cx| {
-                            let _ = view.update(cx, |view, cx| {
-                                if view.clear_selection() {
-                                    cx.notify();
-                                }
-                            });
+                    ("Select None", "ctrl-shift-d", has_selection, |view, cx| {
+                        if view.clear_selection() {
+                            cx.notify();
                         }
-                    })
-                    .disabled(!selection_available),
-                );
+                    }),
+                ];
 
-                menu
+                items.into_iter().fold(
+                    menu.action_context(focus_handle),
+                    |menu, (label, keys, enabled, action)| {
+                        let view = view.clone();
+                        menu.item(
+                            PopupMenuItem::element(move |_, _| {
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(label)
+                                    .children(Keystroke::parse(keys).ok().map(Kbd::new))
+                            })
+                            .on_click(move |_, _, cx| view.update(cx, action))
+                            .disabled(!enabled),
+                        )
+                    },
+                )
+            })
+    }
+}
+
+impl TerminalView {
+    fn render_scrollbar(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let viewport_height: f32 = self.last_bounds?.size.height.into();
+        let scroll_max: f32 = self.scroll_handle.max_offset().y.into();
+        match self.scrollbar {
+            ScrollbarVisibility::Never => return None,
+            ScrollbarVisibility::Auto if scroll_max <= 0.5 || viewport_height <= 0.5 => {
+                return None
             }
-        })
+            _ => {}
+        }
+
+        let content_height = viewport_height + scroll_max;
+        let thumb_height =
+            (viewport_height / content_height * viewport_height).clamp(20.0, viewport_height);
+        let track_height = (viewport_height - thumb_height).max(0.0);
+        let offset_y: f32 = (-self.scroll_handle.offset().y).into();
+        let progress = if scroll_max < f32::EPSILON {
+            0.0
+        } else {
+            (offset_y / scroll_max).clamp(0.0, 1.0)
+        };
+
+        Some(
+            div()
+                .absolute()
+                .right(px(-4.0))
+                .top(px(progress * track_height))
+                .w(px(8.0))
+                .h(px(thumb_height))
+                .rounded(px(4.0))
+                .bg(cx.theme().border.alpha(0.65)),
+        )
     }
 }
 

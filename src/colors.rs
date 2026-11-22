@@ -17,34 +17,21 @@ pub(crate) struct ThemeOverrides {
 }
 
 pub(crate) struct Palette {
+    /// Indexed by `alacritty_terminal::term::color` slot: 0..=255 are the
+    /// indexed colors, the rest are named colors (foreground, cursor, dims...).
     resolved: Vec<Option<Rgba>>,
     pub(crate) default_fg: Rgba,
     pub(crate) default_bg: Rgba,
-    base_colors: Colors,
     indexed: [u32; 16],
-    theme: &'static ThemeOverrides,
 }
 
 impl Palette {
     pub(crate) fn new(colors: &Colors, theme: &'static ThemeOverrides) -> Self {
-        let resolved = (0..COLOR_COUNT)
-            .map(|i| colors[i].map(to_rgba))
-            .collect::<Vec<_>>();
         let mut palette = Self {
-            resolved,
-            default_fg: to_rgba(resolve_named_color(
-                ansi::NamedColor::Foreground,
-                colors,
-                theme,
-            )),
-            default_bg: to_rgba(resolve_named_color(
-                ansi::NamedColor::Background,
-                colors,
-                theme,
-            )),
-            base_colors: *colors,
+            resolved: (0..COLOR_COUNT).map(|i| colors[i].map(to_rgba)).collect(),
+            default_fg: rgba_hex(theme.default_fg),
+            default_bg: rgba_hex(theme.default_bg),
             indexed: theme.indexed,
-            theme,
         };
         palette.apply_theme_overrides(theme);
         palette
@@ -58,13 +45,12 @@ impl Palette {
                 .get(*idx as usize)
                 .and_then(|c| *c)
                 .unwrap_or_else(|| self.resolve_indexed(*idx)),
+            // Every named slot is filled by `apply_theme_overrides`.
             ansi::Color::Named(name) => self
                 .resolved
                 .get(*name as usize)
                 .and_then(|c| *c)
-                .unwrap_or_else(|| {
-                    to_rgba(resolve_named_color(*name, &self.base_colors, self.theme))
-                }),
+                .unwrap_or(self.default_fg),
         }
     }
 
@@ -89,136 +75,39 @@ impl Palette {
     }
 
     fn apply_theme_overrides(&mut self, theme: &ThemeOverrides) {
+        use ansi::NamedColor::*;
+
+        for name in [Foreground, BrightForeground, Cursor] {
+            self.set_named(name, theme.default_fg);
+        }
+        self.set_named(Background, theme.default_bg);
         for &(name, hex) in theme.named {
             self.set_named(name, hex);
         }
-        // Ensure all standard named colors are populated from the theme's indexed palette.
-        for (idx, name) in [
-            ansi::NamedColor::Black,
-            ansi::NamedColor::Red,
-            ansi::NamedColor::Green,
-            ansi::NamedColor::Yellow,
-            ansi::NamedColor::Blue,
-            ansi::NamedColor::Magenta,
-            ansi::NamedColor::Cyan,
-            ansi::NamedColor::White,
-            ansi::NamedColor::BrightBlack,
-            ansi::NamedColor::BrightRed,
-            ansi::NamedColor::BrightGreen,
-            ansi::NamedColor::BrightYellow,
-            ansi::NamedColor::BrightBlue,
-            ansi::NamedColor::BrightMagenta,
-            ansi::NamedColor::BrightCyan,
-            ansi::NamedColor::BrightWhite,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            self.set_named(name, theme.indexed[idx]);
+        // The base 16 and their dim variants always follow `indexed`, even when
+        // `named` lists them. Named colors Black..=BrightWhite share slots 0..16
+        // with the indexed palette.
+        for (slot, &hex) in theme.indexed.iter().enumerate() {
+            self.resolved[slot] = Some(rgba_hex(hex));
         }
-        // Dim variants fallback to base colors for now.
-        for name in [
-            ansi::NamedColor::DimBlack,
-            ansi::NamedColor::DimRed,
-            ansi::NamedColor::DimGreen,
-            ansi::NamedColor::DimYellow,
-            ansi::NamedColor::DimBlue,
-            ansi::NamedColor::DimMagenta,
-            ansi::NamedColor::DimCyan,
-            ansi::NamedColor::DimWhite,
-            ansi::NamedColor::DimForeground,
-        ] {
-            let base = match name {
-                ansi::NamedColor::DimBlack => theme.indexed[0],
-                ansi::NamedColor::DimRed => theme.indexed[1],
-                ansi::NamedColor::DimGreen => theme.indexed[2],
-                ansi::NamedColor::DimYellow => theme.indexed[3],
-                ansi::NamedColor::DimBlue => theme.indexed[4],
-                ansi::NamedColor::DimMagenta => theme.indexed[5],
-                ansi::NamedColor::DimCyan => theme.indexed[6],
-                ansi::NamedColor::DimWhite => theme.indexed[7],
-                ansi::NamedColor::DimForeground => theme.default_fg,
-                _ => theme.default_fg,
-            };
-            self.set_named(name, base);
+        let dims = [
+            DimBlack, DimRed, DimGreen, DimYellow, DimBlue, DimMagenta, DimCyan, DimWhite,
+        ];
+        for (name, &hex) in dims.into_iter().zip(&theme.indexed) {
+            self.set_named(name, hex);
         }
-        self.default_fg = rgba_hex(theme.default_fg);
-        self.default_bg = rgba_hex(theme.default_bg);
+        self.set_named(DimForeground, theme.default_fg);
     }
 
     fn set_named(&mut self, name: ansi::NamedColor, hex: u32) {
-        let idx = name as usize;
-        if let Some(slot) = self.resolved.get_mut(idx) {
-            *slot = Some(rgba_hex(hex));
-        }
+        self.resolved[name as usize] = Some(rgba_hex(hex));
     }
 
     fn resolve_indexed(&self, idx: u8) -> Rgba {
-        if idx < 16 {
-            to_rgba(hex_to_rgb(self.indexed[idx as usize]))
-        } else if (16..=231).contains(&idx) {
-            to_rgba(color_cube(idx))
-        } else {
-            to_rgba(grayscale(idx))
-        }
-    }
-}
-
-fn resolve_named_color(
-    name: ansi::NamedColor,
-    palette: &Colors,
-    theme: &ThemeOverrides,
-) -> ansi::Rgb {
-    match palette[name] {
-        Some(rgb) => rgb,
-        None => {
-            // Try theme specific named overrides.
-            if let Some(hex) = theme
-                .named
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map(|(_, hex)| *hex)
-            {
-                return hex_to_rgb(hex);
-            }
-            // Map standard names to indexed palette.
-            let idx = match name {
-                ansi::NamedColor::Black => Some(0),
-                ansi::NamedColor::Red => Some(1),
-                ansi::NamedColor::Green => Some(2),
-                ansi::NamedColor::Yellow => Some(3),
-                ansi::NamedColor::Blue => Some(4),
-                ansi::NamedColor::Magenta => Some(5),
-                ansi::NamedColor::Cyan => Some(6),
-                ansi::NamedColor::White => Some(7),
-                ansi::NamedColor::BrightBlack => Some(8),
-                ansi::NamedColor::BrightRed => Some(9),
-                ansi::NamedColor::BrightGreen => Some(10),
-                ansi::NamedColor::BrightYellow => Some(11),
-                ansi::NamedColor::BrightBlue => Some(12),
-                ansi::NamedColor::BrightMagenta => Some(13),
-                ansi::NamedColor::BrightCyan => Some(14),
-                ansi::NamedColor::BrightWhite => Some(15),
-                ansi::NamedColor::Foreground => return hex_to_rgb(theme.default_fg),
-                ansi::NamedColor::BrightForeground => return hex_to_rgb(theme.default_fg),
-                ansi::NamedColor::DimForeground => return hex_to_rgb(theme.default_fg),
-                ansi::NamedColor::Background => return hex_to_rgb(theme.default_bg),
-                ansi::NamedColor::Cursor => return hex_to_rgb(theme.default_fg),
-                ansi::NamedColor::DimBlack => Some(0),
-                ansi::NamedColor::DimRed => Some(1),
-                ansi::NamedColor::DimGreen => Some(2),
-                ansi::NamedColor::DimYellow => Some(3),
-                ansi::NamedColor::DimBlue => Some(4),
-                ansi::NamedColor::DimMagenta => Some(5),
-                ansi::NamedColor::DimCyan => Some(6),
-                ansi::NamedColor::DimWhite => Some(7),
-            };
-
-            if let Some(idx) = idx {
-                hex_to_rgb(theme.indexed[idx])
-            } else {
-                hex_to_rgb(theme.indexed[(name as usize) % 16])
-            }
+        match idx {
+            0..16 => rgba_hex(self.indexed[idx as usize]),
+            16..=231 => to_rgba(color_cube(idx)),
+            _ => to_rgba(grayscale(idx)),
         }
     }
 }
@@ -239,14 +128,6 @@ fn color_cube(idx: u8) -> ansi::Rgb {
         r: level(r),
         g: level(g),
         b: level(b),
-    }
-}
-
-fn hex_to_rgb(hex: u32) -> ansi::Rgb {
-    ansi::Rgb {
-        r: ((hex >> 24) & 0xff) as u8,
-        g: ((hex >> 16) & 0xff) as u8,
-        b: ((hex >> 8) & 0xff) as u8,
     }
 }
 
