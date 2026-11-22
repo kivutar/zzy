@@ -1,120 +1,106 @@
-use super::{TerminalMsg, TerminalView};
+//! The shell runs in a PTY driven by alacritty's `EventLoop` on its own
+//! thread: it reads the output, parses it straight into the shared `Term`
+//! (behind a `FairMutex`) and writes our input. The UI thread locks the `Term`
+//! to render and handle input, and receives events (wakeup, title, bell,
+//! exit...) through `TerminalEventProxy`, so heavy output never blocks the UI.
+
+use super::TerminalEventProxy;
 use crate::settings::AppSettings;
-use anyhow::Context as _;
-use futures::{channel::mpsc, StreamExt};
-use gpui_kit::Context;
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use std::{
-    ffi::OsString,
-    io::{Read, Write},
-    sync::Arc,
-    thread,
+use alacritty_terminal::{
+    event::WindowSize,
+    event_loop::{EventLoop, EventLoopSender, Msg},
+    sync::FairMutex,
+    term::Term,
+    tty,
 };
+use anyhow::Context as _;
+use std::{borrow::Cow, collections::HashMap, path::PathBuf, sync::Arc};
 
-/// A spawned PTY: its master side, writer, reader and the child process.
-type OpenPty = (
-    Box<dyn MasterPty + Send>,
-    Box<dyn Write + Send>,
-    Box<dyn Read + Send>,
-    Box<dyn Child + Send + Sync>,
-);
+pub(crate) struct Pty {
+    sender: EventLoopSender,
+    /// The shell's process id (for its working directory).
+    #[cfg(unix)]
+    shell_pid: u32,
+    /// Our own handle on the PTY master, to ask which process group is in the
+    /// foreground. A duplicate, so it stays valid however long we keep it.
+    #[cfg(unix)]
+    master: std::fs::File,
+}
 
-impl TerminalView {
-    pub(crate) fn start_pty(
-        &mut self,
-        tx: mpsc::UnboundedSender<TerminalMsg>,
-        cx: &mut Context<Self>,
-    ) {
-        match self.open_pty() {
-            Ok((master, writer, reader, child)) => {
-                self.master = Some(master);
-                self.writer = Some(Arc::new(parking_lot::Mutex::new(writer)));
-                self.child = Some(child);
-                self.spawn_reader_thread(reader, tx);
-                cx.notify();
-            }
-            Err(err) => {
-                self.error = Some(format!("Failed to start terminal: {err:#}"));
-                cx.notify();
-            }
-        }
-    }
-
-    fn open_pty(&self) -> anyhow::Result<OpenPty> {
-        let pty_system = native_pty_system();
-        let size = PtySize {
-            rows: self.rows as u16,
-            cols: self.cols as u16,
-            pixel_width: 0,
-            pixel_height: 0,
+impl Pty {
+    pub(crate) fn spawn(
+        term: Arc<FairMutex<Term<TerminalEventProxy>>>,
+        proxy: TerminalEventProxy,
+        argv: &[String],
+        cwd: Option<PathBuf>,
+        size: WindowSize,
+    ) -> anyhow::Result<Self> {
+        let (program, args) = argv.split_first().context("empty command")?;
+        let options = tty::Options {
+            shell: Some(tty::Shell::new(program.clone(), args.to_vec())),
+            working_directory: cwd
+                .filter(|dir| dir.is_dir())
+                .or_else(|| std::env::current_dir().ok()),
+            drain_on_exit: true,
+            // alacritty emulates an xterm-compatible terminal; don't pass on
+            // the TERM zedterm itself was started with (e.g. xterm-kitty).
+            env: HashMap::from([
+                ("TERM".to_string(), "xterm-256color".to_string()),
+                ("COLORTERM".to_string(), "truecolor".to_string()),
+            ]),
+            #[cfg(target_os = "windows")]
+            escape_args: true,
         };
-        let pair = pty_system.openpty(size)?;
-        let writer = pair
-            .master
-            .take_writer()
-            .context("failed to take pty writer")?;
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .context("failed to clone pty reader")?;
+        let pty = tty::new(&options, size, 0).context("failed to open a PTY")?;
+        #[cfg(unix)]
+        let shell_pid = pty.child().id();
+        #[cfg(unix)]
+        let master = pty
+            .file()
+            .try_clone()
+            .context("failed to clone the PTY master")?;
 
-        let (program, args) = self.argv.split_first().context("empty command")?;
-        let mut cmd = CommandBuilder::new(program);
-        cmd.args(args);
-        // When the app is launched from a desktop launcher, TERM is usually missing.
-        // Provide a sensible default so tools like git/less do not warn about a
-        // non-functional terminal.
-        cmd.env("TERM", normalize_term_env(std::env::var_os("TERM")));
-        if let Some(cwd) = self
-            .cwd
-            .clone()
-            .filter(|dir| dir.is_dir())
-            .or_else(|| std::env::current_dir().ok())
-        {
-            cmd.cwd(cwd);
-        }
-        let child = pair.slave.spawn_command(cmd)?;
+        let event_loop = EventLoop::new(term, proxy, pty, options.drain_on_exit, false)
+            .context("failed to start the PTY event loop")?;
+        let sender = event_loop.channel();
+        event_loop.spawn();
 
-        Ok((pair.master, writer, reader, child))
-    }
-
-    fn spawn_reader_thread(
-        &self,
-        mut reader: Box<dyn Read + Send>,
-        tx: mpsc::UnboundedSender<TerminalMsg>,
-    ) {
-        thread::spawn(move || {
-            let mut buf = [0u8; 8192];
-            // Linux reports the slave side closing (shell exited) as EIO, so
-            // both EOF and errors mean the session is over.
-            while let Ok(n @ 1..) = reader.read(&mut buf) {
-                if tx
-                    .unbounded_send(TerminalMsg::Output(buf[..n].to_vec()))
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            let _ = tx.unbounded_send(TerminalMsg::Exited);
-        });
-    }
-
-    pub(crate) fn spawn_message_loop(
-        &self,
-        mut rx: mpsc::UnboundedReceiver<TerminalMsg>,
-        cx: &mut Context<Self>,
-    ) {
-        cx.spawn(async move |view, cx| {
-            while let Some(msg) = rx.next().await {
-                if view
-                    .update(cx, |view, cx| view.handle_msg(msg, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
+        Ok(Self {
+            sender,
+            #[cfg(unix)]
+            shell_pid,
+            #[cfg(unix)]
+            master,
         })
-        .detach();
+    }
+
+    pub(crate) fn write(&self, bytes: &[u8]) {
+        let _ = self.sender.send(Msg::Input(Cow::Owned(bytes.to_vec())));
+    }
+
+    pub(crate) fn resize(&self, size: WindowSize) {
+        let _ = self.sender.send(Msg::Resize(size));
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn shell_pid(&self) -> u32 {
+        self.shell_pid
+    }
+
+    /// The PTY's foreground process group (its leader's pid), e.g. `sudo` or
+    /// `ssh` while they run, the shell otherwise.
+    #[cfg(unix)]
+    pub(crate) fn foreground_process_group(&self) -> Option<i32> {
+        use std::os::fd::AsRawFd;
+        // SAFETY: `master` is an open descriptor we own for as long as `self`.
+        let pgid = unsafe { libc::tcgetpgrp(self.master.as_raw_fd()) };
+        (pgid > 0).then_some(pgid)
+    }
+}
+
+impl Drop for Pty {
+    fn drop(&mut self) {
+        let _ = self.sender.send(Msg::Shutdown);
     }
 }
 
@@ -137,11 +123,4 @@ pub(crate) fn command_argv(settings: &AppSettings) -> Result<Vec<String>, String
         argv.push("-l".to_string());
     }
     Ok(argv)
-}
-
-pub(crate) fn normalize_term_env(term: Option<OsString>) -> OsString {
-    match term {
-        Some(value) if !value.is_empty() => value,
-        _ => OsString::from("xterm-256color"),
-    }
 }

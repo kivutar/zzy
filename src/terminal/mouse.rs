@@ -24,7 +24,7 @@ const WHEEL_DOWN: u8 = 65;
 impl TerminalView {
     /// Whether mouse events should go to the program rather than the UI.
     fn reports_mouse(&self, modifiers: &Modifiers) -> bool {
-        !modifiers.shift && self.term.mode().intersects(TermMode::MOUSE_MODE)
+        !modifiers.shift && self.term.lock().mode().intersects(TermMode::MOUSE_MODE)
     }
 
     pub(crate) fn report_mouse_down(
@@ -80,7 +80,7 @@ impl TerminalView {
         if !self.reports_mouse(&event.modifiers) {
             return;
         }
-        let mode = *self.term.mode();
+        let mode = *self.term.lock().mode();
         let code = match self.mouse_button_down {
             Some(button) if mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION) => {
                 button + MOTION
@@ -117,7 +117,7 @@ impl TerminalView {
             return;
         }
 
-        let mode = *self.term.mode();
+        let mode = *self.term.lock().mode();
         let report = self.reports_mouse(&event.modifiers);
         // In the alternate screen (less, man...) there is no scrollback; turn
         // the wheel into arrow keys like other terminals do.
@@ -182,7 +182,7 @@ impl TerminalView {
         modifiers: &Modifiers,
     ) {
         if let Some(bytes) =
-            encode_mouse_report(*self.term.mode(), button, pressed, cell, modifiers)
+            encode_mouse_report(*self.term.lock().mode(), button, pressed, cell, modifiers)
         {
             self.write_bytes(&bytes);
         }

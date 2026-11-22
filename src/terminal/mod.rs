@@ -9,20 +9,18 @@ use crate::settings::{AppSettings, BellMode, CursorShapeSetting, FONT_SIZE_RANGE
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
     grid::{Dimensions, Scroll},
+    sync::FairMutex,
     term::{ClipboardType, Config, Term},
     vte::ansi,
 };
 pub use context::ProcessContext;
-use futures::channel::mpsc;
+use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
     font, px, Bounds, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, Hsla, Rgba,
     SharedString, Subscription, TextRun, Window,
 };
-use parking_lot::Mutex;
-use portable_pty::{Child, MasterPty};
 pub use render::DEFAULT_FONT_SIZE;
 use std::{
-    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -30,11 +28,11 @@ use std::{
 
 pub struct TerminalView {
     focus_handle: FocusHandle,
-    parser: ansi::Processor,
-    term: Term<TerminalEventProxy>,
-    master: Option<Box<dyn MasterPty + Send>>,
-    writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
-    child: Option<Box<dyn Child + Send + Sync>>,
+    /// Shared with the PTY thread, which parses output into it (see `pty.rs`).
+    /// Lock once per operation: `FairMutex` isn't reentrant.
+    term: Arc<FairMutex<Term<TerminalEventProxy>>>,
+    /// `None` if the shell couldn't be started (see `error`).
+    pty: Option<pty::Pty>,
     rows: usize,
     cols: usize,
     /// The settings this terminal currently follows (see `apply_settings`).
@@ -46,10 +44,6 @@ pub struct TerminalView {
     cell_width: f32,
     cell_height: f32,
     program_name: String,
-    /// Program and arguments to run in the PTY.
-    argv: Vec<String>,
-    /// Starting directory; `None` means zedterm's own working directory.
-    cwd: Option<PathBuf>,
     last_bounds: Option<Bounds<gpui_kit::Pixels>>,
     title: Option<String>,
     error: Option<String>,
@@ -84,14 +78,7 @@ struct CellRender {
 
 #[derive(Clone)]
 struct TerminalEventProxy {
-    tx: mpsc::UnboundedSender<TerminalMsg>,
-}
-
-pub(crate) enum TerminalMsg {
-    Output(Vec<u8>),
-    Event(Event),
-    /// The PTY reader hit EOF/error: the shell is gone.
-    Exited,
+    tx: mpsc::UnboundedSender<Event>,
 }
 
 /// Emitted when the shell process exits, so the owner can close the tab.
@@ -158,15 +145,15 @@ impl TerminalView {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let (tx, rx) = mpsc::unbounded();
-        let proxy = TerminalEventProxy { tx: tx.clone() };
+        let proxy = TerminalEventProxy { tx };
         let config = config_from_settings(settings);
-        let term = Term::new(
+        let term = Arc::new(FairMutex::new(Term::new(
             config,
             &SimpleDimensions::new(render::DEFAULT_COLS, render::DEFAULT_ROWS),
-            proxy,
-        );
+            proxy.clone(),
+        )));
         let font_size: f32 = settings.font_size;
-        let (argv, error) = match pty::command_argv(settings) {
+        let (argv, mut error) = match pty::command_argv(settings) {
             Ok(argv) => (argv, None),
             Err(err) => (
                 pty::command_argv(&AppSettings::default()).unwrap_or_default(),
@@ -180,13 +167,24 @@ impl TerminalView {
             .unwrap_or("shell")
             .to_string();
 
+        let size = WindowSize {
+            num_lines: render::DEFAULT_ROWS as u16,
+            num_cols: render::DEFAULT_COLS as u16,
+            cell_width: render::DEFAULT_CELL_WIDTH as u16,
+            cell_height: render::DEFAULT_CELL_HEIGHT as u16,
+        };
+        let pty = match pty::Pty::spawn(term.clone(), proxy, &argv, cwd, size) {
+            Ok(pty) => Some(pty),
+            Err(err) => {
+                error = Some(format!("Failed to start terminal: {err:#}"));
+                None
+            }
+        };
+
         let mut view = Self {
             focus_handle,
-            parser: ansi::Processor::new(),
             term,
-            master: None,
-            writer: None,
-            child: None,
+            pty,
             rows: render::DEFAULT_ROWS,
             cols: render::DEFAULT_COLS,
             settings: settings.clone(),
@@ -195,8 +193,6 @@ impl TerminalView {
             cell_width: render::DEFAULT_CELL_WIDTH,
             cell_height: render::DEFAULT_CELL_HEIGHT,
             program_name,
-            argv,
-            cwd,
             last_bounds: None,
             title: None,
             error,
@@ -215,8 +211,7 @@ impl TerminalView {
         };
 
         view.install_tab_passthrough(cx);
-        view.spawn_message_loop(rx, cx);
-        view.start_pty(tx, cx);
+        view.spawn_event_loop(rx, cx);
         view.start_cursor_blink(cx);
         view._activation_sub = Some(cx.observe_window_activation(window, |view, window, cx| {
             view.window_active = window.is_window_active();
@@ -253,17 +248,19 @@ impl TerminalView {
         }));
     }
 
-    fn handle_msg(&mut self, msg: TerminalMsg, cx: &mut Context<Self>) {
-        match msg {
-            TerminalMsg::Output(bytes) => {
-                // alacritty keeps a scrolled-back view in place as output arrives.
-                self.parser.advance(&mut self.term, &bytes);
-                self.cursor_visible = true;
-                cx.notify();
+    /// Events from the `Term` and the PTY thread, handled on the UI thread.
+    fn spawn_event_loop(&self, mut rx: mpsc::UnboundedReceiver<Event>, cx: &mut Context<Self>) {
+        cx.spawn(async move |view, cx| {
+            while let Some(event) = rx.next().await {
+                if view
+                    .update(cx, |view, cx| view.handle_event(event, cx))
+                    .is_err()
+                {
+                    break;
+                }
             }
-            TerminalMsg::Event(event) => self.handle_event(event, cx),
-            TerminalMsg::Exited => cx.emit(TerminalExited),
-        }
+        })
+        .detach();
     }
 
     fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
@@ -279,8 +276,13 @@ impl TerminalView {
             }
             // A program asks for a palette color (OSC 4/10/11/12), e.g. Neovim or
             // tmux detecting a dark background. Answer from what we draw with.
+            // New output was parsed into the `Term`.
+            Event::Wakeup => self.cursor_visible = true,
+            // The shell exited (the PTY thread has stopped).
+            Event::Exit => cx.emit(TerminalExited),
             Event::ColorRequest(index, formatter) => {
-                let palette = Palette::new(self.term.colors(), palette_for(self.settings.theme));
+                let palette =
+                    Palette::new(self.term.lock().colors(), palette_for(self.settings.theme));
                 self.write_bytes(formatter(palette.rgb_for_slot(index)).as_bytes());
             }
             // OSC 52 copy (tmux, vim, also over SSH).
@@ -398,8 +400,8 @@ impl TerminalView {
     }
 
     fn write_bytes(&self, bytes: &[u8]) {
-        if let Some(writer) = &self.writer {
-            let _ = writer.lock().write_all(bytes);
+        if let Some(pty) = &self.pty {
+            pty.write(bytes);
         }
     }
 
@@ -421,15 +423,9 @@ impl TerminalView {
 
         self.cols = cols;
         self.rows = rows;
-        self.term.resize(SimpleDimensions::new(cols, rows));
-
-        if let Some(master) = &self.master {
-            let _ = master.resize(portable_pty::PtySize {
-                rows: rows as u16,
-                cols: cols as u16,
-                pixel_width: width as u16,
-                pixel_height: height as u16,
-            });
+        self.term.lock().resize(SimpleDimensions::new(cols, rows));
+        if let (Some(pty), Some(size)) = (&self.pty, self.current_window_size()) {
+            pty.resize(size);
         }
 
         cx.notify();
@@ -448,14 +444,8 @@ impl TerminalView {
         })
     }
 
-    /// Index (from the top of the scrollback) of the first visible line:
-    /// alacritty owns scrolling through its display offset.
-    pub(crate) fn viewport_start(&self) -> usize {
-        viewport_start(&self.term)
-    }
-
     pub(crate) fn scroll(&mut self, scroll: Scroll, cx: &mut Context<Self>) {
-        self.term.scroll_display(scroll);
+        self.term.lock().scroll_display(scroll);
         cx.notify();
     }
 
@@ -465,9 +455,15 @@ impl TerminalView {
 
     /// The shell's current directory (Linux: `/proc/<pid>/cwd`), used to
     /// open new tabs in the same place.
+    #[cfg(unix)]
     pub fn current_dir(&self) -> Option<PathBuf> {
-        let pid = self.child.as_ref()?.process_id()?;
+        let pid = self.pty.as_ref()?.shell_pid();
         std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    }
+
+    #[cfg(not(unix))]
+    pub fn current_dir(&self) -> Option<PathBuf> {
+        None
     }
 
     pub fn tab_title(&self) -> String {
@@ -530,13 +526,15 @@ impl TerminalView {
         if config.scrolling_history != old_config.scrolling_history
             || config.default_cursor_style != old_config.default_cursor_style
         {
-            self.term.set_options(config);
+            self.term.lock().set_options(config);
         }
 
         cx.notify();
     }
 }
 
+/// Index (from the top of the scrollback) of the first visible line:
+/// alacritty owns scrolling through its display offset.
 fn viewport_start<T>(term: &Term<T>) -> usize {
     let grid = term.grid();
     grid.total_lines()
@@ -552,7 +550,7 @@ impl Focusable for TerminalView {
 
 impl EventListener for TerminalEventProxy {
     fn send_event(&self, event: Event) {
-        let _ = self.tx.unbounded_send(TerminalMsg::Event(event));
+        let _ = self.tx.unbounded_send(event);
     }
 }
 
@@ -577,27 +575,8 @@ fn cursor_shape_from_settings(settings: &AppSettings) -> ansi::CursorShape {
 
 #[cfg(test)]
 mod tests {
-    use super::pty::normalize_term_env;
     use super::*;
     use crate::theme::ThemeChoice;
-    use std::ffi::OsString;
-
-    #[test]
-    fn normalizes_missing_term() {
-        assert_eq!(normalize_term_env(None), OsString::from("xterm-256color"));
-        assert_eq!(
-            normalize_term_env(Some(OsString::from(""))),
-            OsString::from("xterm-256color")
-        );
-    }
-
-    #[test]
-    fn preserves_existing_term() {
-        assert_eq!(
-            normalize_term_env(Some(OsString::from("alacritty"))),
-            OsString::from("alacritty")
-        );
-    }
 
     #[test]
     fn answers_background_color_query() {
@@ -611,8 +590,7 @@ mod tests {
         );
         ansi::Processor::<ansi::StdSyncHandler>::new().advance(&mut term, b"\x1b]11;?\x07");
 
-        let Some(TerminalMsg::Event(Event::ColorRequest(index, formatter))) = rx.try_recv().ok()
-        else {
+        let Some(Event::ColorRequest(index, formatter)) = rx.try_recv().ok() else {
             panic!("expected a color request");
         };
         let theme = palette_for(ThemeChoice::Dracula);

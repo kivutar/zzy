@@ -47,9 +47,9 @@ impl TerminalView {
             cx.background_executor().timer(POLL_INTERVAL).await;
             let alive = view.update(cx, |view, cx| {
                 let context = view
-                    .master
+                    .pty
                     .as_ref()
-                    .and_then(|master| master.process_group_leader())
+                    .and_then(|pty| pty.foreground_process_group())
                     .map(|pid| detect(&pid.to_string(), our_uid))
                     .unwrap_or_default();
                 if context != view.process_context {

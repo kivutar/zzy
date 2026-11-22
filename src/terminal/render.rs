@@ -1,4 +1,6 @@
-use super::{input::selection_columns, BufferSnapshot, TerminalEventProxy, TerminalView};
+use super::{
+    input::selection_columns, viewport_start, BufferSnapshot, TerminalEventProxy, TerminalView,
+};
 use crate::colors::{palette_for, Palette};
 use crate::settings::ScrollbarVisibility;
 use crate::theme::ThemeChoice;
@@ -28,19 +30,6 @@ pub const DEFAULT_CELL_HEIGHT: f32 = 24.0;
 pub const DEFAULT_FONT_SIZE: f32 = 15.0;
 
 impl TerminalView {
-    /// The visible screen: `screen_lines` rows starting at the viewport, which
-    /// follows alacritty's display offset (scrolled back or at the bottom).
-    pub(crate) fn buffer_segments(&self) -> BufferSnapshot {
-        let start = self.viewport_start();
-        Self::buffer_segments_for_term(
-            &self.term,
-            self.settings.theme,
-            self.settings.bold_text.bright_colors(),
-            start,
-            start + self.term.grid().screen_lines(),
-        )
-    }
-
     pub(super) fn buffer_segments_for_term(
         term: &Term<TerminalEventProxy>,
         theme: ThemeChoice,
@@ -163,7 +152,27 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_cell_metrics(window, cx);
 
-        let buffer = self.buffer_segments();
+        // One consistent snapshot under a single lock: the PTY thread may be
+        // parsing more output concurrently.
+        let (buffer, selection, history) = {
+            let term = self.term.lock();
+            // The visible screen, starting at alacritty's display offset.
+            let start = viewport_start(&term);
+            let buffer = Self::buffer_segments_for_term(
+                &term,
+                self.settings.theme,
+                self.settings.bold_text.bright_colors(),
+                start,
+                start + term.grid().screen_lines(),
+            );
+            let selection = term.selection.as_ref().and_then(|s| s.to_range(&term));
+            let grid = term.grid();
+            (
+                buffer,
+                selection,
+                grid.total_lines().saturating_sub(grid.screen_lines()),
+            )
+        };
         let palette = buffer.palette;
         let cursor_shape = buffer.cursor_shape;
         let block_cursor = matches!(
@@ -171,11 +180,6 @@ impl Render for TerminalView {
             ansi::CursorShape::Block | ansi::CursorShape::HollowBlock
         );
         let cursor_position = buffer.cursor_position.filter(|_| self.cursor_visible);
-        let selection = self.selection_range();
-        let history = {
-            let grid = self.term.grid();
-            grid.total_lines().saturating_sub(grid.screen_lines())
-        };
         let cell_height = self.cell_height;
         let view = cx.entity();
 
@@ -365,7 +369,8 @@ impl TerminalView {
     /// A thumb showing where the viewport is in the scrollback (display only).
     fn render_scrollbar(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
         let viewport_height: f32 = self.last_bounds?.size.height.into();
-        let grid = self.term.grid();
+        let term = self.term.lock();
+        let grid = term.grid();
         let screen = grid.screen_lines() as f32;
         let history = grid.total_lines().saturating_sub(grid.screen_lines()) as f32;
         match self.settings.scrollbar {

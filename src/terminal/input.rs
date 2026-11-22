@@ -39,7 +39,7 @@ impl TerminalView {
         if mods.shift
             && !mods.control
             && !mods.alt
-            && !self.term.mode().contains(TermMode::ALT_SCREEN)
+            && !self.term.lock().mode().contains(TermMode::ALT_SCREEN)
         {
             let scroll = match keystroke.key.as_str() {
                 "pageup" => Some(Scroll::PageUp),
@@ -90,7 +90,7 @@ impl TerminalView {
             cx.stop_propagation();
         }
 
-        let app_cursor = self.term.mode().contains(TermMode::APP_CURSOR);
+        let app_cursor = self.term.lock().mode().contains(TermMode::APP_CURSOR);
         if let Some(bytes) = keystroke_to_bytes(keystroke, app_cursor) {
             self.cursor_visible = true;
             self.scroll_to_bottom_for_input(cx);
@@ -110,18 +110,20 @@ impl TerminalView {
             return;
         }
         window.focus(&self.focus_handle, cx);
-        if let Some(point) = self.grid_point(event.position) {
-            match self.term.selection.as_mut() {
-                Some(selection) if event.modifiers.shift => selection.update(point.0, point.1),
+        if let Some((point, side)) = self.grid_point(event.position) {
+            let mut term = self.term.lock();
+            match term.selection.as_mut() {
+                Some(selection) if event.modifiers.shift => selection.update(point, side),
                 _ => {
                     let ty = match event.click_count {
                         0 | 1 => SelectionType::Simple,
                         2 => SelectionType::Semantic,
                         _ => SelectionType::Lines,
                     };
-                    self.term.selection = Some(Selection::new(ty, point.0, point.1));
+                    term.selection = Some(Selection::new(ty, point, side));
                 }
             }
+            drop(term);
             self.is_selecting = true;
             cx.notify();
         }
@@ -138,7 +140,7 @@ impl TerminalView {
             return;
         }
         if let Some((point, side)) = self.grid_point(event.position) {
-            if let Some(selection) = self.term.selection.as_mut() {
+            if let Some(selection) = self.term.lock().selection.as_mut() {
                 selection.update(point, side);
                 cx.notify();
             }
@@ -157,10 +159,12 @@ impl TerminalView {
         }
         self.is_selecting = false;
         // A plain click (no drag) leaves an empty selection: drop it.
-        if self.term.selection.as_ref().is_some_and(|s| s.is_empty()) {
-            self.term.selection = None;
+        let mut term = self.term.lock();
+        if term.selection.as_ref().is_some_and(|s| s.is_empty()) {
+            term.selection = None;
             cx.notify();
         }
+        drop(term);
         cx.stop_propagation();
     }
 
@@ -178,7 +182,7 @@ impl TerminalView {
             if let Some(text) = item.text() {
                 self.cursor_visible = true;
                 self.scroll_to_bottom_for_input(cx);
-                let bracketed = self.term.mode().contains(TermMode::BRACKETED_PASTE);
+                let bracketed = self.term.lock().mode().contains(TermMode::BRACKETED_PASTE);
                 self.write_bytes(&paste_bytes(&text, bracketed));
                 return true;
             }
@@ -191,7 +195,8 @@ impl TerminalView {
     /// half of the cell it is in.
     pub(crate) fn cell_at(&self, position: Point<Pixels>) -> Option<(CellPosition, Side)> {
         let bounds = self.last_bounds?;
-        let grid = self.term.grid();
+        let term = self.term.lock();
+        let grid = term.grid();
         let columns = grid.columns();
         if columns == 0 || self.cell_width <= 0.0 || self.cell_height <= 0.0 {
             return None;
@@ -214,34 +219,36 @@ impl TerminalView {
     /// negative), accounting for the scrollback display offset.
     fn grid_point(&self, position: Point<Pixels>) -> Option<(AlacPoint, Side)> {
         let (cell, side) = self.cell_at(position)?;
-        let line = Line(cell.line as i32 - self.term.grid().display_offset() as i32);
+        let line = Line(cell.line as i32 - self.term.lock().grid().display_offset() as i32);
         Some((AlacPoint::new(line, Column(cell.column)), side))
-    }
-
-    pub(crate) fn selection_range(&self) -> Option<SelectionRange> {
-        self.term.selection.as_ref()?.to_range(&self.term)
     }
 
     pub(crate) fn selected_text(&self) -> Option<String> {
         self.term
+            .lock()
             .selection_to_string()
             .filter(|text| !text.is_empty())
     }
 
     pub(crate) fn clear_selection(&mut self) -> bool {
         self.is_selecting = false;
-        self.term.selection.take().is_some()
+        self.term.lock().selection.take().is_some()
     }
 
     pub(crate) fn has_selection(&self) -> bool {
-        self.term.selection.as_ref().is_some_and(|s| !s.is_empty())
+        self.term
+            .lock()
+            .selection
+            .as_ref()
+            .is_some_and(|s| !s.is_empty())
     }
 
     pub(crate) fn select_all(&mut self) -> bool {
-        let start = AlacPoint::new(self.term.grid().topmost_line(), Column(0));
+        let mut term = self.term.lock();
+        let start = AlacPoint::new(term.grid().topmost_line(), Column(0));
         let mut selection = Selection::new(SelectionType::Simple, start, Side::Left);
         selection.include_all();
-        self.term.selection = Some(selection);
+        term.selection = Some(selection);
         true
     }
 }
