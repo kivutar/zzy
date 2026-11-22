@@ -582,6 +582,43 @@ const CATPPUCCIN_LATTE: ThemeOverrides = ThemeOverrides {
     border: 0xccd0daff,
 };
 
+// Tokyo Night's dark (Night) and light (Day) styles, from folke/tokyonight.nvim
+// (extras/alacritty); borders use each style's highlight background.
+
+const TOKYO_NIGHT: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0x15161eff, 0xf7768eff, 0x9ece6aff, 0xe0af68ff, 0x7aa2f7ff, 0xbb9af7ff, 0x7dcfffff,
+        0xa9b1d6ff, 0x414868ff, 0xff899dff, 0x9fe044ff, 0xfaba4aff, 0x8db0ffff, 0xc7a9ffff,
+        0xa4daffff, 0xc0caf5ff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0xc0caf5ff),
+        (ansi::NamedColor::BrightForeground, 0xc0caf5ff),
+        (ansi::NamedColor::Background, 0x1a1b26ff),
+        (ansi::NamedColor::Cursor, 0xc0caf5ff),
+    ],
+    default_fg: 0xc0caf5ff,
+    default_bg: 0x1a1b26ff,
+    border: 0x292e42ff,
+};
+
+const TOKYO_NIGHT_DAY: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0xb4b5b9ff, 0xf52a65ff, 0x587539ff, 0x8c6c3eff, 0x2e7de9ff, 0x9854f1ff, 0x007197ff,
+        0x6172b0ff, 0xa1a6c5ff, 0xff4774ff, 0x5c8524ff, 0xa27629ff, 0x358affff, 0xa463ffff,
+        0x007ea8ff, 0x3760bfff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0x3760bfff),
+        (ansi::NamedColor::BrightForeground, 0x3760bfff),
+        (ansi::NamedColor::Background, 0xe1e2e7ff),
+        (ansi::NamedColor::Cursor, 0x3760bfff),
+    ],
+    default_fg: 0x3760bfff,
+    default_bg: 0xe1e2e7ff,
+    border: 0xc4c8daff,
+};
+
 pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOverrides {
     use crate::theme::ThemeChoice::*;
     match theme {
@@ -597,6 +634,8 @@ pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOve
         HamiMelonLight => &HAMI_MELON_LIGHT,
         CatppuccinMocha => &CATPPUCCIN_MOCHA,
         CatppuccinLatte => &CATPPUCCIN_LATTE,
+        TokyoNight => &TOKYO_NIGHT,
+        TokyoNightDay => &TOKYO_NIGHT_DAY,
     }
 }
 

@@ -271,6 +271,11 @@ const DARK_THEMES: Choices<ThemeChoice> = &[
         "catppuccin-mocha",
         Label::Name("Catppuccin Mocha"),
     ),
+    (
+        ThemeChoice::TokyoNight,
+        "tokyo-night",
+        Label::Name("Tokyo Night"),
+    ),
 ];
 
 const LIGHT_THEMES: Choices<ThemeChoice> = &[
@@ -295,6 +300,11 @@ const LIGHT_THEMES: Choices<ThemeChoice> = &[
         ThemeChoice::CatppuccinLatte,
         "catppuccin-latte",
         Label::Name("Catppuccin Latte"),
+    ),
+    (
+        ThemeChoice::TokyoNightDay,
+        "tokyo-night-day",
+        Label::Name("Tokyo Night Day"),
     ),
 ];
 
