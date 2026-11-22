@@ -61,3 +61,8 @@ sudo install -Dm755 target/release/zzy /usr/local/bin/zzy
 sudo install -Dm644 assets/linux/zzy.desktop /usr/local/share/applications/zzy.desktop
 sudo install -Dm644 assets/icons/hicolor/scalable/apps/zzy.svg /usr/local/share/icons/hicolor/scalable/apps/zzy.svg
 ```
+
+## License
+
+zzy is released under the [MIT License](LICENSE). It builds on GPUI, gpui-kit
+and alacritty_terminal, which are under the Apache License 2.0.

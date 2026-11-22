@@ -67,7 +67,7 @@ jobs:
           [[ "$GITHUB_REF_TYPE" == tag ]] || version="dev-${GITHUB_SHA::7}"
           dir="zzy-${version}-${{ matrix.name }}"
           mkdir "$dir"
-          cp README.md "$dir/"
+          cp README.md LICENSE "$dir/"
           if [[ "$RUNNER_OS" == Windows ]]; then
             cp "target/${{ matrix.target }}/release/zzy.exe" "$dir/"
             archive="$dir.zip"

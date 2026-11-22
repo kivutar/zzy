@@ -3,6 +3,7 @@ name = "zzy"
 version = "0.1.0"
 edition = "2021"
 description = "GPUI based terminal emulator"
+license = "MIT"
 publish = false
 
 [dependencies]
