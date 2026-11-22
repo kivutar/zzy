@@ -100,6 +100,9 @@ impl ZedTerm {
         let settings_view = cx.new(move |cx| SettingsView::new(cx, settings));
         cx.observe(&settings_view, |zedterm, settings_view, cx| {
             let settings = settings_view.read(cx).current_settings();
+            if settings.theme != zedterm.settings.theme {
+                apply_app_theme(settings.theme, cx);
+            }
             zedterm.settings = settings;
             zedterm.settings_dirty = true;
             cx.notify();
@@ -183,24 +186,6 @@ impl Render for ZedTerm {
 
         let view = cx.entity();
         let app_bg = theme_background(self.settings.theme);
-        let app_fg = theme_foreground(self.settings.theme);
-        let app_border = colors::theme_border(self.settings.theme);
-        Theme::global_mut(cx).background = app_bg.into();
-        Theme::global_mut(cx).secondary = app_bg.into();
-        Theme::global_mut(cx).foreground = app_fg.into();
-        Theme::global_mut(cx).secondary_foreground = app_fg.into();
-        Theme::global_mut(cx).tab_foreground = app_fg.into();
-        Theme::global_mut(cx).tab_bar = app_bg.into();
-        Theme::global_mut(cx).tab_bar_segmented = app_bg.into();
-        Theme::global_mut(cx).title_bar = app_bg.into();
-        Theme::global_mut(cx).border = app_border.into();
-        Theme::global_mut(cx).input = app_border.into();
-        Theme::global_mut(cx).ring = app_border.into();
-        Theme::global_mut(cx).sidebar_border = app_border.into();
-        Theme::global_mut(cx).title_bar_border = app_border.into();
-        Theme::global_mut(cx).window_border = app_border.into();
-        Theme::global_mut(cx).tab_active = app_border.into();
-        Theme::global_mut(cx).table_row_border = app_border.into();
         v_flex()
             .size_full()
             .child(
@@ -312,21 +297,51 @@ impl Render for ZedTerm {
     }
 }
 
+/// Override the component theme with the terminal palette.
+///
+/// Must go through `Theme::update` so the render tokens (e.g. `tokens.tab_active`)
+/// stay in sync with `colors`; it also refreshes all windows, so don't call it
+/// from `render`.
+fn apply_app_theme(choice: theme::ThemeChoice, cx: &mut App) {
+    let bg: Hsla = theme_background(choice).into();
+    let fg: Hsla = theme_foreground(choice).into();
+    let border: Hsla = colors::theme_border(choice).into();
+    Theme::update(cx, |theme| {
+        theme.background = bg;
+        theme.secondary = bg;
+        theme.foreground = fg;
+        theme.secondary_foreground = fg;
+        theme.tab_foreground = fg;
+        theme.tab_bar = bg;
+        theme.tab_bar_segmented = bg;
+        theme.title_bar = bg;
+        theme.border = border;
+        theme.input = border;
+        theme.ring = border;
+        theme.sidebar_border = border;
+        theme.title_bar_border = border;
+        theme.window_border = border;
+        theme.tab_active = border;
+        theme.table_row_border = border;
+        theme.mono_font_family = "Adwaita Mono".into();
+    });
+}
+
 fn main() {
     let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
 
     app.run(move |cx| {
         gpui_kit::init(cx);
-        Theme::global_mut(cx).mode = ThemeMode::Dark;
         Theme::change(ThemeMode::Dark, None, cx);
-        let border_color = Theme::global(cx).border;
-        Theme::global_mut(cx).tab_active = border_color;
-        // Override the monospace font after applying the theme so it doesn't get reset.
-        Theme::global_mut(cx).mono_font_family = "Adwaita Mono".into();
+        apply_app_theme(AppSettings::default().theme, cx);
 
         let window_options = WindowOptions {
             // Setup GPUI to use custom title bar and client-side decorations for Wayland/X11.
-            titlebar: Some(TitleBar::title_bar_options()),
+            titlebar: Some(TitlebarOptions {
+                title: Some("zedterm".into()),
+                ..TitleBar::title_bar_options()
+            }),
+            app_id: Some("zedterm".into()),
             window_decorations: Some(WindowDecorations::Client),
             window_background: WindowBackgroundAppearance::Transparent,
             window_bounds: Some(WindowBounds::centered(size(px(800.), px(600.)), cx)),
