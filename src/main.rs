@@ -9,11 +9,12 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     tab::{Tab, TabBar},
-    v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
+    v_flex, ActiveTheme, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use settings::{AppSettings, NewTabDirectory, SettingsView};
+use std::{cell::Cell, rc::Rc};
 use terminal::{ProcessContext, TerminalBell, TerminalExited, TerminalView};
 
 pub struct ZedTerm {
@@ -271,6 +272,9 @@ impl Render for ZedTerm {
         // (red) or over SSH (green). Painted under all content, on top of Root's
         // background; default-colored terminal cells don't paint, so it shows through.
         let window_tint = context_color(&self.tabs[self.selected_index], cx);
+        let border_color = cx.theme().border;
+        let active_left: Rc<Cell<Option<Pixels>>> = Rc::default();
+        let active_right: Rc<Cell<Option<Pixels>>> = Rc::default();
         let header = v_flex()
             .w_full()
             .child(
@@ -301,74 +305,163 @@ impl Render for ZedTerm {
                         ),
                 ),
             )
+            // Connected active tab: gpui-kit draws a full-width line under the tab
+            // bar and expects an opaque active tab to cover it, which would break
+            // translucency. Instead the bar is clipped 1px short (hiding its line)
+            // and we draw the line ourselves, leaving a gap under the active tab.
             .child(
-                TabBar::new("tabs")
-                    .w_full()
-                    .selected_index(self.selected_index)
-                    .on_click({
-                        let view = view.clone();
-                        move |selected_index, window, cx| {
+                div().h(px(TAB_HEIGHT - 1.)).overflow_hidden().child(
+                    TabBar::new("tabs")
+                        .w_full()
+                        .flex_shrink_0()
+                        .selected_index(self.selected_index)
+                        .on_click({
                             let view = view.clone();
-                            let _ = view.update(cx, |zedterm, cx| {
-                                zedterm.select_tab(*selected_index, cx);
-                                zedterm.focus_selected(window, cx);
-                            });
-                        }
-                    })
-                    .suffix({
-                        let view = view.clone();
-                        Button::new("add-tab")
-                            .ghost()
-                            .xsmall()
-                            .mr_2()
-                            .icon(IconName::Plus)
-                            .cursor(CursorStyle::PointingHand)
-                            .tab_stop(false)
-                            .on_click(move |_, window, cx| {
+                            move |selected_index, window, cx| {
                                 let view = view.clone();
                                 let _ = view.update(cx, |zedterm, cx| {
-                                    zedterm.add_terminal_tab(cx);
+                                    zedterm.select_tab(*selected_index, cx);
                                     zedterm.focus_selected(window, cx);
                                 });
-                            })
-                    })
-                    .children(self.tabs.iter().enumerate().map(|(index, tab)| {
-                        let close_view = view.clone();
-                        let (label, icon) = match tab {
-                            TabContent::Terminal(term) => {
-                                (term.read(cx).tab_title(), IconName::SquareTerminal)
                             }
-                            TabContent::Settings(_) => {
-                                ("Settings".to_string(), IconName::Settings2)
-                            }
+                        })
+                        .suffix({
+                            let view = view.clone();
+                            Button::new("add-tab")
+                                .ghost()
+                                .xsmall()
+                                .mr_2()
+                                .icon(IconName::Plus)
+                                .cursor(CursorStyle::PointingHand)
+                                .tab_stop(false)
+                                .on_click(move |_, window, cx| {
+                                    let view = view.clone();
+                                    let _ = view.update(cx, |zedterm, cx| {
+                                        zedterm.add_terminal_tab(cx);
+                                        zedterm.focus_selected(window, cx);
+                                    });
+                                })
+                        })
+                        .children(self.tabs.iter().enumerate().map(|(index, tab)| {
+                            let close_view = view.clone();
+                            let (label, icon) = match tab {
+                                TabContent::Terminal(term) => {
+                                    (term.read(cx).tab_title(), IconName::SquareTerminal)
+                                }
+                                TabContent::Settings(_) => {
+                                    ("Settings".to_string(), IconName::Settings2)
+                                }
+                            };
+                            // Background tabs keep their own context color on the icon.
+                            let icon = Icon::new(icon)
+                                .when_some(context_color(tab, cx), |icon, color| {
+                                    icon.text_color(color)
+                                });
+                            // The active tab reports its outer edges (content edge plus
+                            // our padding and gpui-kit's 1px side border) so the line
+                            // under the tab bar can leave a gap there. Recorded during
+                            // prepaint, read when the line paints later in the frame.
+                            let selected = index == self.selected_index;
+                            let measure = |cell: &Rc<Cell<Option<Pixels>>>, right_edge: bool| {
+                                let cell = cell.clone();
+                                canvas(
+                                    move |bounds, _, _| {
+                                        let outset = px(TAB_PADDING_X + 1.);
+                                        cell.set(Some(if right_edge {
+                                            bounds.right() + outset
+                                        } else {
+                                            bounds.left() - outset
+                                        }));
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full()
+                            };
+                            let icon = div()
+                                .child(icon)
+                                .when(selected, |this| this.child(measure(&active_left, false)));
+                            // gpui-kit paints inactive tab borders transparent and its
+                            // state styles override ours, so draw a 1px separator on the
+                            // tab's right edge ourselves, inside the suffix (tab children
+                            // go into a clipped inner box). Taffy positions absolute
+                            // elements against their direct parent, so the suffix box is
+                            // made as tall as the tab (`TAB_HEIGHT`) and the line
+                            // reaches past our `TAB_PADDING_X` padding
+                            // to the tab edge. Skipped next to the selected tab, whose
+                            // own border already separates it.
+                            let separator =
+                                index != self.selected_index && index + 1 != self.selected_index;
+                            let close_button = Button::new(("close-tab", index as u32))
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Close)
+                                .cursor(CursorStyle::PointingHand)
+                                .tab_stop(false)
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    let view = close_view.clone();
+                                    let _ = view.update(cx, |zedterm, cx| {
+                                        zedterm.close_tab(index, cx);
+                                        zedterm.focus_selected(window, cx);
+                                    });
+                                });
+                            Tab::new()
+                                .prefix(icon)
+                                .label(label)
+                                .px(px(TAB_PADDING_X))
+                                .cursor(CursorStyle::PointingHand)
+                                .suffix(
+                                    h_flex()
+                                        .h(px(TAB_HEIGHT))
+                                        .child(close_button)
+                                        .when(selected, |this| {
+                                            this.child(measure(&active_right, true))
+                                        })
+                                        .when(separator, |this| {
+                                            this.child(
+                                                div()
+                                                    .absolute()
+                                                    .top_0()
+                                                    .bottom_0()
+                                                    .right(px(-TAB_PADDING_X))
+                                                    .w(px(1.))
+                                                    .bg(border_color),
+                                            )
+                                        }),
+                                )
+                        })),
+                ),
+            )
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        let (left, right) = (bounds.left(), bounds.right());
+                        let segments = match (active_left.get(), active_right.get()) {
+                            // Each segment also covers the active tab's 1px side
+                            // border column, closing the corner where they meet.
+                            (Some(gap_start), Some(gap_end)) => vec![
+                                (left, (gap_start + px(1.)).clamp(left, right)),
+                                ((gap_end - px(1.)).clamp(left, right), right),
+                            ],
+                            _ => vec![(left, right)],
                         };
-                        // Background tabs keep their own context color on the icon.
-                        let icon = Icon::new(icon)
-                            .when_some(context_color(tab, cx), |icon, color| {
-                                icon.text_color(color)
-                            });
-                        Tab::new()
-                            .prefix(icon)
-                            .label(label)
-                            .px_2()
-                            .cursor(CursorStyle::PointingHand)
-                            .suffix(
-                                Button::new(("close-tab", index as u32))
-                                    .ghost()
-                                    .xsmall()
-                                    .icon(IconName::Close)
-                                    .cursor(CursorStyle::PointingHand)
-                                    .tab_stop(false)
-                                    .on_click(move |_, window, cx| {
-                                        cx.stop_propagation();
-                                        let view = close_view.clone();
-                                        let _ = view.update(cx, |zedterm, cx| {
-                                            zedterm.close_tab(index, cx);
-                                            zedterm.focus_selected(window, cx);
-                                        });
-                                    }),
-                            )
-                    })),
+                        for (start, end) in segments {
+                            if end > start {
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        point(start, bounds.top()),
+                                        size(end - start, px(1.)),
+                                    ),
+                                    border_color,
+                                ));
+                            }
+                        }
+                    },
+                )
+                .w_full()
+                .h(px(1.)),
             );
 
         v_flex()
@@ -421,7 +514,9 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
         theme.tab_bar_segmented = clear;
         theme.title_bar = clear;
         theme.sidebar = clear;
-        theme.tab_active = border.opacity(opacity);
+        // The active tab shows the plain window background; its side borders and
+        // the gap in the line under the tab bar mark it (see the tab bar in render).
+        theme.tab_active = clear;
         theme.foreground = fg;
         theme.secondary_foreground = fg;
         theme.tab_foreground = fg;
@@ -438,6 +533,11 @@ fn apply_app_theme(settings: &AppSettings, cx: &mut App) {
         theme.mono_font_family = "Adwaita Mono".into();
     });
 }
+
+/// gpui-kit's default `TabVariant::Tab` height and our horizontal tab padding,
+/// used to place the inactive-tab separator on the tab's edge.
+const TAB_HEIGHT: f32 = 32.0;
+const TAB_PADDING_X: f32 = 8.0;
 
 const WINDOW_STATE_SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
