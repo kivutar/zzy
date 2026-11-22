@@ -4,19 +4,19 @@ mod mouse;
 mod pty;
 mod render;
 
-use crate::colors::Palette;
+use crate::colors::{palette_for, Palette};
 use crate::settings::{AppSettings, BellMode, CursorShapeSetting, FONT_SIZE_RANGE};
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
     grid::Dimensions,
-    term::{Config, Term},
+    term::{ClipboardType, Config, Term},
     vte::ansi,
 };
 pub use context::ProcessContext;
 use futures::channel::mpsc;
 use gpui_kit::{
-    font, px, Bounds, Context, EventEmitter, FocusHandle, Focusable, Hsla, Rgba, ScrollHandle,
-    SharedString, Subscription, TextRun, Window,
+    font, px, Bounds, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, Hsla, Rgba,
+    ScrollHandle, SharedString, Subscription, TextRun, Window,
 };
 use parking_lot::Mutex;
 use portable_pty::{Child, MasterPty};
@@ -303,6 +303,27 @@ impl TerminalView {
                     self.write_bytes(seq.as_bytes());
                 }
             }
+            // A program asks for a palette color (OSC 4/10/11/12), e.g. Neovim or
+            // tmux detecting a dark background. Answer from what we draw with.
+            Event::ColorRequest(index, formatter) => {
+                let palette = Palette::new(self.term.colors(), palette_for(self.settings.theme));
+                self.write_bytes(formatter(palette.rgb_for_slot(index)).as_bytes());
+            }
+            // OSC 52 copy (tmux, vim, also over SSH).
+            Event::ClipboardStore(clipboard, text) => {
+                let item = ClipboardItem::new_string(text);
+                match clipboard {
+                    ClipboardType::Clipboard => cx.write_to_clipboard(item),
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                    ClipboardType::Selection => cx.write_to_primary(item),
+                    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                    ClipboardType::Selection => cx.write_to_clipboard(item),
+                }
+            }
+            // OSC 52 paste is deliberately not answered: it would let any program
+            // (including one on a remote host) silently read the clipboard.
+            // alacritty refuses it by default too.
+            Event::ClipboardLoad(..) => {}
             Event::Bell => self.ring_bell(cx),
             Event::Title(title) => {
                 self.title = Some(title);
@@ -581,6 +602,7 @@ fn cursor_shape_from_settings(settings: &AppSettings) -> ansi::CursorShape {
 mod tests {
     use super::pty::normalize_term_env;
     use super::*;
+    use crate::theme::ThemeChoice;
     use std::ffi::OsString;
 
     #[test]
@@ -598,6 +620,32 @@ mod tests {
             normalize_term_env(Some(OsString::from("alacritty"))),
             OsString::from("alacritty")
         );
+    }
+
+    #[test]
+    fn answers_background_color_query() {
+        use crate::colors::{palette_for, rgba_hex, Palette};
+
+        let (tx, mut rx) = mpsc::unbounded();
+        let mut term = Term::new(
+            Config::default(),
+            &SimpleDimensions::new(10, 4),
+            TerminalEventProxy { tx },
+        );
+        ansi::Processor::<ansi::StdSyncHandler>::new().advance(&mut term, b"\x1b]11;?\x07");
+
+        let Some(TerminalMsg::Event(Event::ColorRequest(index, formatter))) =
+            rx.try_recv().ok()
+        else {
+            panic!("expected a color request");
+        };
+        let theme = palette_for(ThemeChoice::Dracula);
+        let reply = formatter(Palette::new(term.colors(), theme).rgb_for_slot(index));
+
+        let bg = rgba_hex(theme.default_bg);
+        let hex = |v: f32| format!("{:02x}", (v * 255.0).round() as u8);
+        let expected = format!("rgb:{0}{0}/{1}{1}/{2}{2}", hex(bg.r), hex(bg.g), hex(bg.b));
+        assert!(reply.contains(&expected), "{reply:?} should contain {expected}");
     }
 
     #[test]

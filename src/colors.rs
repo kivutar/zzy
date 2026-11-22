@@ -77,6 +77,25 @@ impl Palette {
         }
     }
 
+    /// The color in palette slot `index` (0..=255 indexed, then the named
+    /// colors), as reported to programs that query it (OSC 4/10/11/12).
+    pub(crate) fn rgb_for_slot(&self, index: usize) -> ansi::Rgb {
+        let color = match u8::try_from(index) {
+            Ok(idx) => self.resolve(&ansi::Color::Indexed(idx)),
+            Err(_) => self
+                .resolved
+                .get(index)
+                .and_then(|c| *c)
+                .unwrap_or(self.default_fg),
+        };
+        let channel = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        ansi::Rgb {
+            r: channel(color.r),
+            g: channel(color.g),
+            b: channel(color.b),
+        }
+    }
+
     pub(crate) fn fg_bg(&self, cell: &Cell, bold_is_bright: bool) -> (Rgba, Rgba) {
         let mut fg = if cell.flags.contains(Flags::DIM) {
             self.resolve_dim(&cell.fg)
