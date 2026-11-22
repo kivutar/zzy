@@ -105,7 +105,8 @@ impl Drop for Pty {
 }
 
 /// The command to run: the custom command from the settings, split like a
-/// shell would, or the user's `$SHELL` (with `-l` when a login shell is wanted).
+/// shell would, or the user's `$SHELL` (with `-l` when a login shell is wanted);
+/// on Windows, PowerShell.
 pub(crate) fn command_argv(settings: &AppSettings) -> Result<Vec<String>, String> {
     let custom = settings.command.trim();
     if !custom.is_empty() {
@@ -114,13 +115,22 @@ pub(crate) fn command_argv(settings: &AppSettings) -> Result<Vec<String>, String
             return Ok(argv);
         }
     }
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|shell| !shell.is_empty())
-        .unwrap_or_else(|| "/bin/sh".to_string());
-    let mut argv = vec![shell];
-    if settings.login_shell {
-        argv.push("-l".to_string());
+    #[cfg(windows)]
+    {
+        // Windows has no `$SHELL` or login shells.
+        let _ = settings.login_shell;
+        Ok(vec!["powershell.exe".to_string()])
     }
-    Ok(argv)
+    #[cfg(not(windows))]
+    {
+        let shell = std::env::var("SHELL")
+            .ok()
+            .filter(|shell| !shell.is_empty())
+            .unwrap_or_else(|| "/bin/sh".to_string());
+        let mut argv = vec![shell];
+        if settings.login_shell {
+            argv.push("-l".to_string());
+        }
+        Ok(argv)
+    }
 }

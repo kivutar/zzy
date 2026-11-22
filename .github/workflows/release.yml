@@ -1,0 +1,112 @@
+name: Release
+
+# Pushing a version tag (e.g. v0.1.0) builds every platform and publishes a
+# GitHub release. Running it by hand builds the same archives as workflow
+# artifacts, without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on Ubuntu 22.04 so the binaries run on any distribution with
+          # glibc 2.35 or newer.
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: linux-arm64
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: windows-arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          # Cross-compiled on the Apple Silicon runner: Apple's SDK targets both.
+          - name: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: .github/scripts/install-linux-deps.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        shell: bash
+        env:
+          # Windows: link the C runtime statically, so zzy.exe needs no Visual
+          # C++ redistributable.
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || version="dev-${GITHUB_SHA::7}"
+          dir="zzy-${version}-${{ matrix.name }}"
+          mkdir "$dir"
+          cp README.md "$dir/"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cp "target/${{ matrix.target }}/release/zzy.exe" "$dir/"
+            archive="$dir.zip"
+            7z a "$archive" "$dir" > /dev/null
+          else
+            cp "target/${{ matrix.target }}/release/zzy" "$dir/"
+            if [[ "$RUNNER_OS" == Linux ]]; then
+              # Desktop entry and icon, for `install` (see the README).
+              mkdir -p "$dir/share/applications" "$dir/share/icons/hicolor/scalable/apps"
+              cp assets/linux/zzy.desktop "$dir/share/applications/"
+              cp assets/icons/hicolor/scalable/apps/zzy.svg "$dir/share/icons/hicolor/scalable/apps/"
+            fi
+            archive="$dir.tar.gz"
+            tar czf "$archive" "$dir"
+          fi
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "zzy $GITHUB_REF_NAME" \
+            --generate-notes

@@ -1,3 +1,6 @@
+// A GUI app: no console window next to it on Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod colors;
 mod config;
 mod i18n;

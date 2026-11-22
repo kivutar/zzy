@@ -1,5 +1,6 @@
 //! Persistence: user settings in `$XDG_CONFIG_HOME/zzy/settings.toml` and
-//! window state (size, maximized) in `$XDG_STATE_HOME/zzy/window.toml`.
+//! window state (size, maximized) in `$XDG_STATE_HOME/zzy/window.toml`; on
+//! Windows, in `%APPDATA%\zzy` and `%LOCALAPPDATA%\zzy`.
 //!
 //! Failures never stop the app: a missing or broken file falls back to the
 //! defaults (with a warning), and a failed write is reported and ignored.
@@ -12,6 +13,7 @@ use std::{
 };
 
 /// `$XDG_*_HOME/zzy`, falling back to `$HOME/<fallback>/zzy`.
+#[cfg(not(windows))]
 fn app_dir(xdg_var: &str, fallback: &str) -> Option<PathBuf> {
     let base = std::env::var_os(xdg_var)
         .map(PathBuf::from)
@@ -23,7 +25,9 @@ fn app_dir(xdg_var: &str, fallback: &str) -> Option<PathBuf> {
 }
 
 /// The app used to be called zedterm: move its directory over once, so
-/// existing settings and window state carry over.
+/// existing settings and window state carry over. (zedterm never ran on
+/// Windows, so only the XDG directories need it.)
+#[cfg_attr(windows, allow(dead_code))]
 fn migrate_old_dir(old: &Path, new: &Path) {
     if new.exists() || !old.is_dir() {
         return;
@@ -35,6 +39,21 @@ fn migrate_old_dir(old: &Path, new: &Path) {
             new.display()
         );
     }
+}
+
+/// Windows has no `$HOME` or XDG directories: settings roam with the user
+/// (`%APPDATA%`), window state stays on this machine (`%LOCALAPPDATA%`).
+#[cfg(windows)]
+fn app_dir(xdg_var: &str, _fallback: &str) -> Option<PathBuf> {
+    let var = if xdg_var == "XDG_STATE_HOME" {
+        "LOCALAPPDATA"
+    } else {
+        "APPDATA"
+    };
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .map(|base| base.join("zzy"))
 }
 
 fn settings_path() -> Option<PathBuf> {

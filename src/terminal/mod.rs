@@ -687,8 +687,10 @@ mod tests {
             vec!["fish"]
         );
         let shell = pty::command_argv(&with("  ", true)).unwrap();
-        assert_eq!(shell.len(), 2);
-        assert_eq!(shell[1], "-l");
+        #[cfg(unix)]
+        assert_eq!(shell[1..], ["-l"]);
+        #[cfg(windows)]
+        assert_eq!(shell, ["powershell.exe"]);
         assert!(pty::command_argv(&with("echo 'unterminated", false)).is_err());
     }
 

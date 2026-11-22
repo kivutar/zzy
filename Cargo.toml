@@ -25,3 +25,7 @@ rust-i18n = "4.2"
 # shift the blur the other way; drop it once KWin is fixed.
 [patch.crates-io]
 gpui-pre-linux = { path = "patches/gpui-pre-linux" }
+
+[profile.release]
+# Smaller downloads: release binaries carry no debug symbols.
+strip = true

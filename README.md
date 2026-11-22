@@ -1,6 +1,6 @@
 # zzy
 
-zzy is a GPU-rendered terminal emulator for Linux, built with [GPUI](https://www.gpui.rs/)
+zzy is a GPU-rendered terminal emulator, built with [GPUI](https://www.gpui.rs/)
 (the UI framework behind the Zed editor) and
 [alacritty_terminal](https://crates.io/crates/alacritty_terminal) for terminal
 emulation. It is an independent project, not affiliated with Zed Industries.
@@ -14,6 +14,18 @@ Features:
 - Settings editable from a built-in panel, saved to
   `~/.config/zzy/settings.toml`
 - English and Japanese interface, following the system language by default
+
+## Download
+
+Builds for Linux, Windows and macOS, on x86_64 and arm64, are on the
+[releases page](https://github.com/kivutar/zzy/releases).
+
+- **Linux:** needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36
+  and later). The archive also holds the desktop entry and icon.
+- **Windows:** a single `zzy.exe`, no runtime to install. It isn't signed yet,
+  so SmartScreen may ask for confirmation on first launch.
+- **macOS:** the binary isn't signed or notarized yet; after extracting, clear
+  the quarantine flag with `xattr -d com.apple.quarantine zzy`.
 
 ## Building
 
