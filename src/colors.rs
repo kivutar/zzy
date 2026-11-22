@@ -619,6 +619,81 @@ const TOKYO_NIGHT_DAY: ThemeOverrides = ThemeOverrides {
     border: 0xc4c8daff,
 };
 
+// Solarized, Ethan Schoonover's canonical terminal mapping (as in
+// alacritty-theme): one ANSI palette for both; body text is base0 on base03
+// (dark) and base00 on base3 (light), borders the base02/base2 highlights.
+
+const SOLARIZED_ANSI: [u32; 16] = [
+    0x073642ff, 0xdc322fff, 0x859900ff, 0xb58900ff, 0x268bd2ff, 0xd33682ff, 0x2aa198ff, 0xeee8d5ff,
+    0x002b36ff, 0xcb4b16ff, 0x586e75ff, 0x657b83ff, 0x839496ff, 0x6c71c4ff, 0x93a1a1ff, 0xfdf6e3ff,
+];
+
+const SOLARIZED_DARK: ThemeOverrides = ThemeOverrides {
+    indexed: SOLARIZED_ANSI,
+    named: &[
+        (ansi::NamedColor::Foreground, 0x839496ff),
+        (ansi::NamedColor::BrightForeground, 0x93a1a1ff),
+        (ansi::NamedColor::DimForeground, 0x586e75ff),
+        (ansi::NamedColor::Background, 0x002b36ff),
+        (ansi::NamedColor::Cursor, 0x839496ff),
+    ],
+    default_fg: 0x839496ff,
+    default_bg: 0x002b36ff,
+    border: 0x073642ff,
+};
+
+const SOLARIZED_LIGHT: ThemeOverrides = ThemeOverrides {
+    indexed: SOLARIZED_ANSI,
+    named: &[
+        (ansi::NamedColor::Foreground, 0x657b83ff),
+        (ansi::NamedColor::BrightForeground, 0x586e75ff),
+        (ansi::NamedColor::DimForeground, 0x93a1a1ff),
+        (ansi::NamedColor::Background, 0xfdf6e3ff),
+        (ansi::NamedColor::Cursor, 0x657b83ff),
+    ],
+    default_fg: 0x657b83ff,
+    default_bg: 0xfdf6e3ff,
+    border: 0xeee8d5ff,
+};
+
+// Kanagawa's dark (Wave) and light (Lotus) themes, from rebelot/kanagawa.nvim
+// (extras/alacritty); borders are subtle tones of its palette (sumiInk4,
+// lotusWhite4), which those files don't define.
+
+const KANAGAWA_WAVE: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0x090618ff, 0xc34043ff, 0x76946aff, 0xc0a36eff, 0x7e9cd8ff, 0x957fb8ff, 0x6a9589ff,
+        0xc8c093ff, 0x727169ff, 0xe82424ff, 0x98bb6cff, 0xe6c384ff, 0x7fb4caff, 0x938aa9ff,
+        0x7aa89fff, 0xdcd7baff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0xdcd7baff),
+        (ansi::NamedColor::BrightForeground, 0xdcd7baff),
+        (ansi::NamedColor::Background, 0x1f1f28ff),
+        (ansi::NamedColor::Cursor, 0xdcd7baff),
+    ],
+    default_fg: 0xdcd7baff,
+    default_bg: 0x1f1f28ff,
+    border: 0x2a2a37ff,
+};
+
+const KANAGAWA_LOTUS: ThemeOverrides = ThemeOverrides {
+    indexed: [
+        0x1f1f28ff, 0xc84053ff, 0x6f894eff, 0x77713fff, 0x4d699bff, 0xb35b79ff, 0x597b75ff,
+        0x545464ff, 0x8a8980ff, 0xd7474bff, 0x6e915fff, 0x836f4aff, 0x6693bfff, 0x624c83ff,
+        0x5e857aff, 0x43436cff,
+    ],
+    named: &[
+        (ansi::NamedColor::Foreground, 0x545464ff),
+        (ansi::NamedColor::BrightForeground, 0x545464ff),
+        (ansi::NamedColor::Background, 0xf2ecbcff),
+        (ansi::NamedColor::Cursor, 0x545464ff),
+    ],
+    default_fg: 0x545464ff,
+    default_bg: 0xf2ecbcff,
+    border: 0xe7dba0ff,
+};
+
 pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOverrides {
     use crate::theme::ThemeChoice::*;
     match theme {
@@ -636,6 +711,10 @@ pub(crate) fn palette_for(theme: crate::theme::ThemeChoice) -> &'static ThemeOve
         CatppuccinLatte => &CATPPUCCIN_LATTE,
         TokyoNight => &TOKYO_NIGHT,
         TokyoNightDay => &TOKYO_NIGHT_DAY,
+        SolarizedDark => &SOLARIZED_DARK,
+        SolarizedLight => &SOLARIZED_LIGHT,
+        KanagawaWave => &KANAGAWA_WAVE,
+        KanagawaLotus => &KANAGAWA_LOTUS,
     }
 }
 

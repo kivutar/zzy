@@ -19,6 +19,10 @@ pub enum ThemeChoice {
     CatppuccinLatte,
     TokyoNight,
     TokyoNightDay,
+    SolarizedDark,
+    SolarizedLight,
+    KanagawaWave,
+    KanagawaLotus,
 }
 
 impl ThemeChoice {
@@ -32,6 +36,8 @@ impl ThemeChoice {
                 | Self::AyuDark
                 | Self::CatppuccinMocha
                 | Self::TokyoNight
+                | Self::SolarizedDark
+                | Self::KanagawaWave
         )
     }
 }

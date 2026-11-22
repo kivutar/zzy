@@ -276,6 +276,16 @@ const DARK_THEMES: Choices<ThemeChoice> = &[
         "tokyo-night",
         Label::Name("Tokyo Night"),
     ),
+    (
+        ThemeChoice::SolarizedDark,
+        "solarized-dark",
+        Label::Name("Solarized Dark"),
+    ),
+    (
+        ThemeChoice::KanagawaWave,
+        "kanagawa-wave",
+        Label::Name("Kanagawa Wave"),
+    ),
 ];
 
 const LIGHT_THEMES: Choices<ThemeChoice> = &[
@@ -305,6 +315,16 @@ const LIGHT_THEMES: Choices<ThemeChoice> = &[
         ThemeChoice::TokyoNightDay,
         "tokyo-night-day",
         Label::Name("Tokyo Night Day"),
+    ),
+    (
+        ThemeChoice::SolarizedLight,
+        "solarized-light",
+        Label::Name("Solarized Light"),
+    ),
+    (
+        ThemeChoice::KanagawaLotus,
+        "kanagawa-lotus",
+        Label::Name("Kanagawa Lotus"),
     ),
 ];
 
