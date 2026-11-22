@@ -318,6 +318,10 @@ fn apply_app_theme(choice: theme::ThemeChoice, cx: &mut App) {
         theme.border = border;
         theme.input = border;
         theme.ring = border;
+        theme.sidebar = bg;
+        theme.sidebar_foreground = fg;
+        theme.sidebar_accent = border;
+        theme.sidebar_accent_foreground = fg;
         theme.sidebar_border = border;
         theme.title_bar_border = border;
         theme.window_border = border;
