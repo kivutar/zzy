@@ -139,6 +139,12 @@ impl TerminalView {
         if !self.is_selecting {
             return;
         }
+        // The button was released outside the terminal (over the tab bar or
+        // outside the window), where its mouse up never reached us.
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.is_selecting = false;
+            return;
+        }
         if let Some((point, side)) = self.grid_point(event.position) {
             if let Some(selection) = self.term.lock().selection.as_mut() {
                 selection.update(point, side);
@@ -307,9 +313,14 @@ fn keystroke_to_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>
     } else if mods.control && keystroke.key.len() == 1 {
         match keystroke.key.as_bytes()[0].to_ascii_lowercase() {
             ch @ b'a'..=b'z' => vec![ch - b'a' + 1],
-            b'[' => vec![0x1b],
-            b'\\' => vec![0x1c],
-            b']' => vec![0x1d],
+            // xterm's control codes for the keys around the letters.
+            b'@' | b'2' => vec![0],
+            b'[' | b'3' => vec![0x1b],
+            b'\\' | b'4' => vec![0x1c],
+            b']' | b'5' => vec![0x1d],
+            b'^' | b'6' => vec![0x1e],
+            b'_' | b'/' | b'7' => vec![0x1f],
+            b'8' => vec![0x7f],
             _ => return None,
         }
     } else if mods.alt && keystroke.key.chars().count() == 1 {
@@ -507,6 +518,9 @@ mod tests {
         assert_eq!(bytes("up", true), Some(b"\x1bOA".to_vec()));
         assert_eq!(bytes("enter", false), Some(b"\r".to_vec()));
         assert_eq!(bytes("ctrl-backspace", false), Some(vec![0x08]));
+        // Ctrl+/ is undo in readline and Emacs.
+        assert_eq!(bytes("ctrl-/", false), Some(vec![0x1f]));
+        assert_eq!(bytes("ctrl-2", false), Some(vec![0]));
     }
 
     #[test]

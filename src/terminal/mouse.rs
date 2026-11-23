@@ -30,7 +30,7 @@ impl TerminalView {
     pub(crate) fn report_mouse_down(
         &mut self,
         event: &MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(code) = button_code(event.button) else {
@@ -39,6 +39,8 @@ impl TerminalView {
         if !self.reports_mouse(&event.modifiers) {
             return;
         }
+        // The press doesn't reach the outer handler that focuses the terminal.
+        window.focus(&self.focus_handle, cx);
         if let Some(cell) = self.viewport_cell(event.position) {
             self.mouse_button_down = Some(code);
             self.last_mouse_cell = Some(cell);
@@ -77,6 +79,15 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A reported button released outside the terminal: report the release
+        // now, so the program doesn't keep dragging.
+        if let Some(button) = self.mouse_button_down {
+            if event.pressed_button.and_then(button_code) != Some(button) {
+                self.mouse_button_down = None;
+                let cell = self.last_mouse_cell.unwrap_or_default();
+                self.write_mouse_report(button, false, cell, &event.modifiers);
+            }
+        }
         if !self.reports_mouse(&event.modifiers) {
             return;
         }

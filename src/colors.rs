@@ -129,8 +129,12 @@ impl Palette {
         if cell.flags.contains(Flags::INVERSE) {
             std::mem::swap(&mut fg, &mut bg);
         }
-        // Dim and hidden text are meant to be faint.
-        if self.min_contrast > 0.0 && !cell.flags.intersects(Flags::DIM | Flags::HIDDEN) {
+        // Hidden (concealed, SGR 8) text isn't shown: drawn in its background.
+        if cell.flags.contains(Flags::HIDDEN) {
+            return (bg, bg);
+        }
+        // Dim text is meant to be faint.
+        if self.min_contrast > 0.0 && !cell.flags.contains(Flags::DIM) {
             fg = *self
                 .contrast_cache
                 .borrow_mut()
@@ -771,6 +775,14 @@ mod tests {
         assert_eq!(off.fg_bg(&cell(white, Flags::empty()), false).0, raw);
         let dim = cell(white, Flags::DIM);
         assert_eq!(on.fg_bg(&dim, false).0, off.fg_bg(&dim, false).0);
+    }
+
+    #[test]
+    fn hidden_text_is_drawn_in_its_background() {
+        let palette = Palette::new(&Colors::default(), palette_for(ThemeChoice::Dracula));
+        let red = ansi::Color::Named(ansi::NamedColor::Red);
+        let (fg, bg) = palette.fg_bg(&cell(red, Flags::HIDDEN), false);
+        assert_eq!(fg, bg);
     }
 
     fn cell(fg: ansi::Color, flags: Flags) -> Cell {

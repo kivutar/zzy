@@ -29,6 +29,12 @@ pub const DEFAULT_CELL_WIDTH: f32 = 8.0;
 pub const DEFAULT_CELL_HEIGHT: f32 = 24.0;
 pub const DEFAULT_FONT_SIZE: f32 = 15.0;
 
+/// Cell attributes drawn as text styles; the others only affect colors.
+const TEXT_STYLE: Flags = Flags::BOLD
+    .union(Flags::ITALIC)
+    .union(Flags::ALL_UNDERLINES)
+    .union(Flags::STRIKEOUT);
+
 impl TerminalView {
     pub(super) fn buffer_segments_for_term(
         term: &Term<TerminalEventProxy>,
@@ -66,7 +72,7 @@ impl TerminalView {
                 let is_cursor = cursor.point.line == grid_line
                     && cursor.point.column == Column(col_idx)
                     && cursor.shape != ansi::CursorShape::Hidden;
-                let is_bold = cell.flags.contains(Flags::BOLD);
+                let style = cell.flags & TEXT_STYLE;
                 if is_cursor {
                     cursor_position = Some(super::CellPosition {
                         line: line_idx,
@@ -82,7 +88,7 @@ impl TerminalView {
                         && run.fg == fg
                         && run.bg == bg
                         && run.is_cursor == is_cursor
-                        && run.is_bold == is_bold
+                        && run.style == style
                 });
                 if !extends {
                     runs.push(super::CellRender {
@@ -92,7 +98,7 @@ impl TerminalView {
                         fg,
                         bg,
                         is_cursor,
-                        is_bold,
+                        style,
                     });
                 }
                 let run = runs.last_mut().expect("a run was just ensured");
@@ -204,8 +210,16 @@ impl Render for TerminalView {
                     .left(px(seg.column as f32 * self.cell_width))
                     .w(px(seg.cells as f32 * self.cell_width))
                     .h(px(cell_height))
-                    .when(seg.is_bold && self.settings.bold_text.bold_font(), |this| {
-                        this.font_weight(FontWeight::BOLD)
+                    .when(
+                        seg.style.contains(Flags::BOLD) && self.settings.bold_text.bold_font(),
+                        |this| this.font_weight(FontWeight::BOLD),
+                    )
+                    .when(seg.style.contains(Flags::ITALIC), |this| this.italic())
+                    .when(seg.style.intersects(Flags::ALL_UNDERLINES), |this| {
+                        this.underline()
+                    })
+                    .when(seg.style.contains(Flags::STRIKEOUT), |this| {
+                        this.line_through()
                     })
                     .text_color(fg)
                     .when(bg != palette.default_bg, |this| this.bg(bg))
@@ -382,7 +396,6 @@ impl TerminalView {
                 .top(px(progress * track_height))
                 .w(px(8.0))
                 .h(px(thumb_height))
-                .rounded(px(4.0))
                 .bg(cx.theme().border.alpha(0.65)),
         )
     }

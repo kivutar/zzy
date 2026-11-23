@@ -83,7 +83,8 @@ struct CellRender {
     fg: Rgba,
     bg: Rgba,
     is_cursor: bool,
-    is_bold: bool,
+    /// The cell attributes that change how text is drawn (`TEXT_STYLE`).
+    style: alacritty_terminal::term::cell::Flags,
 }
 
 #[derive(Clone)]
@@ -286,12 +287,12 @@ impl TerminalView {
                     self.write_bytes(seq.as_bytes());
                 }
             }
-            // A program asks for a palette color (OSC 4/10/11/12), e.g. Neovim or
-            // tmux detecting a dark background. Answer from what we draw with.
             // New output was parsed into the `Term`.
             Event::Wakeup => self.cursor_visible = true,
             // The shell exited (the PTY thread has stopped).
             Event::Exit => cx.emit(TerminalExited),
+            // A program asks for a palette color (OSC 4/10/11/12), e.g. Neovim or
+            // tmux detecting a dark background. Answer from what we draw with.
             Event::ColorRequest(index, formatter) => {
                 let palette = Palette::new(self.term.lock().colors(), palette_for(self.theme));
                 self.write_bytes(formatter(palette.rgb_for_slot(index)).as_bytes());

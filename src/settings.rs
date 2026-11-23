@@ -120,7 +120,6 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// Clamp values (e.g. from a hand-edited file) to what the UI allows.
     /// The theme to use, given whether the desktop prefers dark.
     pub fn theme(&self, system_dark: bool) -> ThemeChoice {
         let dark = match self.appearance {
@@ -135,6 +134,7 @@ impl AppSettings {
         }
     }
 
+    /// Clamp values (e.g. from a hand-edited file) to what the UI allows.
     pub fn sanitized(mut self) -> Self {
         let clamp =
             |v: f64, (min, max): (f64, f64)| if v.is_nan() { min } else { v.clamp(min, max) };
@@ -784,9 +784,10 @@ fn dropdown<T: Copy + PartialEq + 'static>(
     .default_value(key_of(fallback).to_string())
 }
 
-/// Theme previews, after Ptyxis's palette previews: a grid of cards (three per
-/// row) in each theme's own colors and the terminal font, showing its name, a
-/// sample sentence and six of its colors (ANSI 1 to 6). Clicking a card
+/// Theme previews, after Ptyxis's palette previews: a grid of cards (as many
+/// per row as fit, see `grid_layout`) in each theme's own colors and the
+/// terminal font, showing its name, a sample sentence and six of its colors
+/// (ANSI 1 to 6). Clicking a card
 /// picks the theme; the picked one has an accent ring and a check mark.
 /// Square, unlike Ptyxis's: zzy's design has no rounded corners.
 fn theme_cards(

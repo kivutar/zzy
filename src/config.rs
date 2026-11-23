@@ -69,7 +69,7 @@ fn load<T: DeserializeOwned + Default>(path: Option<PathBuf>) -> T {
         return T::default();
     };
     match fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
+        Ok(text) => parse_lenient(&text).unwrap_or_else(|err| {
             eprintln!("zzy: ignoring invalid {}: {err}", path.display());
             T::default()
         }),
@@ -79,6 +79,25 @@ fn load<T: DeserializeOwned + Default>(path: Option<PathBuf>) -> T {
             T::default()
         }
     }
+}
+
+/// Parse `text`, skipping keys whose value is invalid (e.g. a theme from a
+/// newer zzy, or a typo) rather than ignoring the whole file: they keep their
+/// default, and the other settings survive.
+fn parse_lenient<T: DeserializeOwned>(text: &str) -> Result<T, toml::de::Error> {
+    let table: toml::Table = toml::from_str(text)?;
+    let valid: toml::Table = table
+        .into_iter()
+        .filter(|(key, value)| {
+            let single = toml::Table::from_iter([(key.clone(), value.clone())]);
+            let ok = T::deserialize(single).is_ok();
+            if !ok {
+                eprintln!("zzy: ignoring invalid setting {key} = {value}");
+            }
+            ok
+        })
+        .collect();
+    T::deserialize(valid)
 }
 
 fn save<T: Serialize>(path: Option<PathBuf>, value: &T) {
@@ -211,6 +230,14 @@ mod tests {
         let loaded = loaded.sanitized();
         assert_eq!(loaded.font_size, 72.0);
         assert_eq!(loaded.background_opacity, 0.1);
+    }
+
+    #[test]
+    fn an_invalid_value_keeps_the_other_settings() {
+        let loaded: AppSettings =
+            parse_lenient("font-size = 20.0\ndark-theme = \"no-such-theme\"").unwrap();
+        assert_eq!(loaded.font_size, 20.0);
+        assert_eq!(loaded.dark_theme, AppSettings::default().dark_theme);
     }
 
     #[test]
