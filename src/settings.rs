@@ -12,13 +12,13 @@ use gpui_kit::component::setting::{
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    div, font, hsla, point, px, AnyElement, App, AppContext as _, BoxShadow, Context, Div, Entity,
-    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, Subscription, Task, TextSystem,
-    Window,
+    canvas, div, font, hsla, point, px, AnyElement, App, AppContext as _, BoxShadow, Context, Div,
+    Entity, FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels,
+    Render, SharedString, Stateful, StatefulInteractiveElement, Styled, Subscription, Task,
+    TextSystem, Window,
 };
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 pub const DEFAULT_FONT_FAMILY: &str = "Adwaita Mono";
 /// GPUI's name for the desktop's interface font.
@@ -439,6 +439,8 @@ pub struct SettingsView {
     settings: AppSettings,
     /// The font pickers, made on first render (they need the window).
     font_pickers: Option<FontPickers>,
+    /// The width available to the theme cards, measured while drawing.
+    cards_width: Rc<Cell<Option<Pixels>>>,
 }
 
 struct FontPickers {
@@ -515,6 +517,7 @@ impl SettingsView {
             focus_handle: cx.focus_handle(),
             settings,
             font_pickers: None,
+            cards_width: Rc::default(),
         }
     }
 
@@ -797,21 +800,67 @@ fn theme_cards(
     let view = view.clone();
     SettingItem::render(move |_, _, cx| {
         let current = read(cx);
-        let font = view.read(cx).settings.font_family.clone();
+        let settings_view = view.read(cx);
+        let font = settings_view.settings.font_family.clone();
+        // Setting items aren't told their width: it is measured while drawing
+        // (below) and the grid follows it from the next frame on.
+        let width_cell = settings_view.cards_width.clone();
+        let (columns, grid_width) =
+            grid_layout(width_cell.get().unwrap_or(px(3. * CARD_MIN_WIDTH)));
+        let view = view.clone();
         div()
-            .grid()
-            .grid_cols(3)
-            .gap(px(9.))
+            .relative()
             .w_full()
-            // Room for the selection ring around the edge cards.
-            .p(px(2.))
-            .children(choices.iter().map(|&(theme, key, label)| {
-                let write = write.clone();
-                theme_card(theme, key, label.text(), theme == current, font.clone(), cx)
-                    .on_click(move |_, _, cx| write(theme, cx))
-            }))
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        if width_cell.get() != Some(bounds.size.width) {
+                            width_cell.set(Some(bounds.size.width));
+                            let view = view.clone();
+                            cx.defer(move |cx| view.update(cx, |_, cx| cx.notify()));
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(columns)
+                    .gap(px(CARD_GAP))
+                    .w(grid_width)
+                    .mx_auto()
+                    // Room for the selection ring around the edge cards.
+                    .p(px(2.))
+                    .children(choices.iter().map(|&(theme, key, label)| {
+                        let write = write.clone();
+                        theme_card(theme, key, label.text(), theme == current, font.clone(), cx)
+                            .on_click(move |_, _, cx| write(theme, cx))
+                    })),
+            )
     })
     .keywords(choices.iter().map(|(_, _, label)| label.text()))
+}
+
+/// Theme cards are at least this wide, and at most `CARD_MAX_WIDTH`.
+const CARD_MIN_WIDTH: f32 = 200.;
+const CARD_MAX_WIDTH: f32 = 280.;
+const CARD_GAP: f32 = 9.;
+const MAX_CARD_COLUMNS: u16 = 4;
+
+/// Columns and grid width for theme cards in `available` width: as many
+/// columns as fit at the minimum card width (1 to 4), cards sharing the width
+/// up to their maximum one; a wider space centers the grid.
+fn grid_layout(available: Pixels) -> (u16, Pixels) {
+    // The selection ring's padding on both sides.
+    let available = f32::from(available) - 4.;
+    let columns = ((available + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP))
+        .floor()
+        .clamp(1., MAX_CARD_COLUMNS as f32) as u16;
+    let widest = columns as f32 * CARD_MAX_WIDTH + (columns - 1) as f32 * CARD_GAP;
+    (columns, px(available.min(widest) + 4.))
 }
 
 fn theme_card(
@@ -1144,6 +1193,21 @@ impl Focusable for SettingsView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_cards_fit_the_width() {
+        // Narrow: one column, as wide as the space.
+        assert_eq!(grid_layout(px(150.)), (1, px(150.)));
+        // Two to four columns as the space grows.
+        assert_eq!(grid_layout(px(430.)).0, 2);
+        assert_eq!(grid_layout(px(640.)).0, 3);
+        assert_eq!(grid_layout(px(900.)).0, 4);
+        // Very wide: never more than four columns, cards at their maximum
+        // width, the grid narrower than the space (and centered).
+        let (columns, width) = grid_layout(px(2000.));
+        assert_eq!(columns, 4);
+        assert_eq!(width, px(4. * 280. + 3. * 9. + 4.));
+    }
 
     #[test]
     fn theme_follows_the_appearance() {
