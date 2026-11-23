@@ -3,6 +3,8 @@ use crate::i18n::tr;
 use crate::terminal::DEFAULT_FONT_SIZE;
 use crate::theme::ThemeChoice;
 use gpui_kit::component::group_box::GroupBoxVariant;
+use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
+use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage,
     Settings as SettingsPanel,
@@ -10,14 +12,19 @@ use gpui_kit::component::setting::{
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    div, hsla, point, px, App, BoxShadow, Context, Div, Entity, FocusHandle, Focusable, Hsla,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window,
+    div, font, hsla, point, px, AnyElement, App, AppContext as _, BoxShadow, Context, Div, Entity,
+    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Subscription, Task, TextSystem,
+    Window,
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
 pub const DEFAULT_FONT_FAMILY: &str = "Adwaita Mono";
+/// GPUI's name for the desktop's interface font.
+pub const SYSTEM_UI_FONT: &str = ".SystemUIFont";
+/// gpui-kit's default interface text size.
+pub const DEFAULT_UI_FONT_SIZE: f32 = 16.0;
 
 /// Saved as `settings.toml` (see `config.rs`); missing keys use the defaults.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -27,6 +34,12 @@ pub struct AppSettings {
     pub cursor_blink: bool,
     pub cursor_shape: CursorShapeSetting,
     pub font_family: SharedString,
+    /// Font of the interface (tabs, menus, settings); `SYSTEM_UI_FONT` follows
+    /// the desktop's.
+    pub ui_font_family: SharedString,
+    /// Size of the interface text, in pixels. gpui-kit sizes its controls
+    /// relative to it, so it scales the whole interface.
+    pub ui_font_size: f32,
     pub bold_text: BoldText,
     pub scrollback: usize,
     pub scrollbar: ScrollbarVisibility,
@@ -78,6 +91,8 @@ impl Default for AppSettings {
             cursor_blink: true,
             cursor_shape: CursorShapeSetting::Block,
             font_family: DEFAULT_FONT_FAMILY.into(),
+            ui_font_family: SYSTEM_UI_FONT.into(),
+            ui_font_size: DEFAULT_UI_FONT_SIZE,
             bold_text: BoldText::BoldFont,
             scrollback: 1000,
             scrollbar: ScrollbarVisibility::Auto,
@@ -124,6 +139,7 @@ impl AppSettings {
         let clamp =
             |v: f64, (min, max): (f64, f64)| if v.is_nan() { min } else { v.clamp(min, max) };
         self.font_size = clamp(self.font_size as f64, FONT_SIZE_RANGE) as f32;
+        self.ui_font_size = clamp(self.ui_font_size as f64, UI_FONT_SIZE_RANGE) as f32;
         self.padding = clamp(self.padding as f64, PADDING_RANGE) as f32;
         self.minimum_contrast = clamp(self.minimum_contrast as f64, CONTRAST_RANGE) as f32;
         self.border_width = clamp(self.border_width as f64, BORDER_WIDTH_RANGE).round() as f32;
@@ -406,6 +422,7 @@ const NEW_TAB_DIRECTORIES: Choices<NewTabDirectory> = &[
 ];
 
 pub(crate) const FONT_SIZE_RANGE: (f64, f64) = (8.0, 72.0);
+const UI_FONT_SIZE_RANGE: (f64, f64) = (10.0, 24.0);
 const PADDING_RANGE: (f64, f64) = (0.0, 48.0);
 /// APCA Lc: 0 is off, 45 (the default, as in Zed) suits body text, 75 and up
 /// is high contrast.
@@ -420,6 +437,76 @@ const OPACITY_RANGE: (f64, f64) = (10.0, 100.0);
 pub struct SettingsView {
     focus_handle: FocusHandle,
     settings: AppSettings,
+    /// The font pickers, made on first render (they need the window).
+    font_pickers: Option<FontPickers>,
+}
+
+struct FontPickers {
+    terminal: FontSelect,
+    interface: FontSelect,
+    _subscriptions: [Subscription; 2],
+    _listing: Task<()>,
+}
+
+/// Which font a picker sets.
+#[derive(Clone, Copy)]
+enum FontKind {
+    /// The terminal's: monospace fonts only.
+    Terminal,
+    /// The interface's: any font, or the desktop's.
+    Interface,
+}
+
+impl FontKind {
+    fn get(self, settings: &AppSettings) -> &SharedString {
+        match self {
+            Self::Terminal => &settings.font_family,
+            Self::Interface => &settings.ui_font_family,
+        }
+    }
+
+    fn set(self, settings: &mut AppSettings, family: SharedString) {
+        match self {
+            Self::Terminal => settings.font_family = family,
+            Self::Interface => settings.ui_font_family = family,
+        }
+    }
+
+    fn default_family(self) -> SharedString {
+        match self {
+            Self::Terminal => DEFAULT_FONT_FAMILY.into(),
+            Self::Interface => SYSTEM_UI_FONT.into(),
+        }
+    }
+
+    /// The picker's entries: the given families, the desktop's font first for
+    /// the interface, and the configured font even when it isn't installed or
+    /// isn't monospace.
+    fn items(self, families: &[SharedString], current: &SharedString) -> Vec<FontItem> {
+        let mut families = families.to_vec();
+        if *current != SYSTEM_UI_FONT && !families.contains(current) {
+            families.push(current.clone());
+            families.sort_by_key(|family| family.to_lowercase());
+        }
+        let system = matches!(self, Self::Interface).then(|| FontItem {
+            family: SYSTEM_UI_FONT.into(),
+            label: tr("choice.system_font"),
+        });
+        system
+            .into_iter()
+            .chain(families.into_iter().map(|family| FontItem {
+                label: family.clone(),
+                family,
+            }))
+            .collect()
+    }
+}
+
+/// Installed font families, listed in the background (measuring which are
+/// monospace means opening every font, which takes a moment).
+struct FontFamilies {
+    all: Vec<SharedString>,
+    monospace: Vec<SharedString>,
 }
 
 impl SettingsView {
@@ -427,12 +514,183 @@ impl SettingsView {
         Self {
             focus_handle: cx.focus_handle(),
             settings,
+            font_pickers: None,
         }
     }
 
     pub fn current_settings(&self) -> AppSettings {
         self.settings.clone()
     }
+
+    /// The terminal and interface font pickers. They start with the current
+    /// fonts only, and get the installed fonts once listed in the background.
+    fn font_pickers(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (FontSelect, FontSelect) {
+        if let Some(pickers) = &self.font_pickers {
+            return (pickers.terminal.clone(), pickers.interface.clone());
+        }
+        let mut new_picker = |kind: FontKind, cx: &mut Context<Self>| {
+            let current = kind.get(&self.settings).clone();
+            let select = cx.new(|cx| {
+                SelectState::new(
+                    SearchableVec::new(kind.items(&[], &current)),
+                    None,
+                    window,
+                    cx,
+                )
+                .searchable(true)
+            });
+            select.update(cx, |select, cx| {
+                select.set_selected_value(&current, window, cx)
+            });
+            let subscription = cx.subscribe(
+                &select,
+                move |this, _, event: &SelectEvent<SearchableVec<FontItem>>, cx| {
+                    if let SelectEvent::Confirm(Some(family)) = event {
+                        if kind.get(&this.settings) != family {
+                            kind.set(&mut this.settings, family.clone());
+                            cx.notify();
+                        }
+                    }
+                },
+            );
+            (select, subscription)
+        };
+        let (terminal, terminal_subscription) = new_picker(FontKind::Terminal, cx);
+        let (interface, interface_subscription) = new_picker(FontKind::Interface, cx);
+
+        let text_system = cx.text_system().clone();
+        let listing = cx.spawn_in(window, async move |this, cx| {
+            let families = cx
+                .background_spawn(async move { font_families(&text_system) })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(pickers) = &this.font_pickers else {
+                    return;
+                };
+                for (kind, select, list) in [
+                    (FontKind::Terminal, &pickers.terminal, &families.monospace),
+                    (FontKind::Interface, &pickers.interface, &families.all),
+                ] {
+                    let current = kind.get(&this.settings).clone();
+                    let items = kind.items(list, &current);
+                    select.update(cx, |select, cx| {
+                        select.set_items(SearchableVec::new(items), window, cx);
+                        select.set_selected_value(&current, window, cx);
+                    });
+                }
+            });
+        });
+        self.font_pickers = Some(FontPickers {
+            terminal: terminal.clone(),
+            interface: interface.clone(),
+            _subscriptions: [terminal_subscription, interface_subscription],
+            _listing: listing,
+        });
+        (terminal, interface)
+    }
+}
+
+/// A font picker field, with a reset to the default font.
+fn font_field(
+    view: &Entity<SettingsView>,
+    select: FontSelect,
+    kind: FontKind,
+) -> SettingField<SharedString> {
+    SettingField::render({
+        let select = select.clone();
+        move |_, _, _| {
+            Select::new(&select)
+                .w(px(240.))
+                .menu_width(px(320.))
+                .search_placeholder(tr("settings.font_search"))
+        }
+    })
+    .on_reset(
+        {
+            let view = view.clone();
+            move |cx| *kind.get(&view.read(cx).settings) != kind.default_family()
+        },
+        {
+            let view = view.clone();
+            move |window, cx| {
+                let default = kind.default_family();
+                view.update(cx, |view, cx| {
+                    kind.set(&mut view.settings, default.clone());
+                    cx.notify();
+                });
+                select.update(cx, |select, cx| {
+                    select.set_selected_value(&default, window, cx)
+                });
+            }
+        },
+    )
+}
+
+/// A font family in a font picker, drawn in its own typeface.
+#[derive(Clone)]
+struct FontItem {
+    family: SharedString,
+    label: SharedString,
+}
+
+impl SearchableListItem for FontItem {
+    type Value = SharedString;
+
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+
+    fn display_title(&self) -> Option<AnyElement> {
+        Some(self.render_in_own_font().into_any_element())
+    }
+
+    fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        self.render_in_own_font()
+    }
+
+    fn value(&self) -> &SharedString {
+        &self.family
+    }
+}
+
+impl FontItem {
+    fn render_in_own_font(&self) -> Div {
+        div()
+            .font_family(self.family.clone())
+            .child(self.label.clone())
+    }
+}
+
+type FontSelect = Entity<SelectState<SearchableVec<FontItem>>>;
+
+/// The installed font families, and the monospace ones a terminal can use:
+/// every character as wide (measured on `i`, `M` and `W`).
+fn font_families(text_system: &TextSystem) -> FontFamilies {
+    let size = px(16.);
+    let all: Vec<SharedString> = text_system
+        .all_font_names()
+        .into_iter()
+        .map(SharedString::from)
+        .collect();
+    let monospace = all
+        .iter()
+        .filter(|family| {
+            let id = text_system.resolve_font(&font((*family).clone()));
+            let width = |ch| text_system.advance(id, size, ch).ok().map(|s| s.width);
+            match (width('i'), width('M'), width('W')) {
+                (Some(i), Some(m), Some(w)) => {
+                    i > px(0.) && (i - m).abs() < px(0.01) && (m - w).abs() < px(0.01)
+                }
+                _ => false,
+            }
+        })
+        .cloned()
+        .collect();
+    FontFamilies { all, monospace }
 }
 
 /// Getter/setter pair bound to one `AppSettings` field. The setter only
@@ -524,8 +782,8 @@ fn dropdown<T: Copy + PartialEq + 'static>(
 }
 
 /// Theme previews, after Ptyxis's palette previews: a grid of cards (three per
-/// row) in each theme's own colors, showing its name, a sample sentence in
-/// the terminal font and six of its colors (ANSI 1 to 6). Clicking a card
+/// row) in each theme's own colors and the terminal font, showing its name, a
+/// sample sentence and six of its colors (ANSI 1 to 6). Clicking a card
 /// picks the theme; the picked one has an accent ring and a check mark.
 /// Square, unlike Ptyxis's: zzy's design has no rounded corners.
 fn theme_cards(
@@ -600,6 +858,8 @@ fn theme_card(
             v_flex()
                 .p(px(12.))
                 .gap(px(12.))
+                // A terminal color scheme: the whole card in the terminal font.
+                .font_family(font)
                 .text_color(fg)
                 .child(
                     h_flex()
@@ -619,12 +879,7 @@ fn theme_card(
                                 }),
                         ),
                 )
-                .child(
-                    div()
-                        .font_family(font)
-                        .line_clamp(3)
-                        .child(tr("settings.theme_sample")),
-                )
+                .child(div().line_clamp(3).child(tr("settings.theme_sample")))
                 .child(h_flex().gap(px(3.)).children((1..=6).map(|index| {
                     div()
                         .flex_1()
@@ -636,10 +891,19 @@ fn theme_card(
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
+        let (terminal_font, interface_font) = self.font_pickers(window, cx);
 
-        let font_family = text(&view, |s| s.font_family.clone(), |s, v| s.font_family = v);
+        let font_family = font_field(&view, terminal_font, FontKind::Terminal);
+        let ui_font_family = font_field(&view, interface_font, FontKind::Interface);
+        let ui_font_size = number(
+            &view,
+            UI_FONT_SIZE_RANGE,
+            1.0,
+            |s| s.ui_font_size as f64,
+            |s, v| s.ui_font_size = v as f32,
+        );
         let font_size = number(
             &view,
             FONT_SIZE_RANGE,
@@ -770,6 +1034,14 @@ impl Render for SettingsView {
                                 |s| s.light_theme,
                                 |s, v| s.light_theme = v,
                             )),
+                    )
+                    .group(
+                        SettingGroup::new()
+                            .title(tr("settings.group.interface"))
+                            .items(vec![
+                                SettingItem::new(tr("settings.font_family"), ui_font_family),
+                                SettingItem::new(tr("settings.ui_font_size"), ui_font_size),
+                            ]),
                     )
                     .group(
                         SettingGroup::new()

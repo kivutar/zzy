@@ -206,7 +206,9 @@ impl Zzy {
         cx: &mut Context<Self>,
     ) {
         let theme_changed = settings.theme(self.system_dark) != self.theme()
-            || settings.background_opacity != self.settings.background_opacity;
+            || settings.background_opacity != self.settings.background_opacity
+            || settings.ui_font_family != self.settings.ui_font_family
+            || settings.ui_font_size != self.settings.ui_font_size;
         if theme_changed {
             apply_app_theme(settings.theme(self.system_dark), &settings, cx);
         }
@@ -536,6 +538,9 @@ fn apply_app_theme(choice: ThemeChoice, settings: &AppSettings, cx: &mut App) {
         theme.window_border = border;
         theme.table_row_border = border;
         theme.mono_font_family = settings::DEFAULT_FONT_FAMILY.into();
+        // gpui-kit sizes its controls in rems of `font_size`: it scales them too.
+        theme.font_family = settings.ui_font_family.clone();
+        theme.font_size = px(settings.ui_font_size);
     });
 }
 

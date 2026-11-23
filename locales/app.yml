@@ -10,6 +10,9 @@ settings.group.font:
 settings.font_family:
   en: Font Family
   ja: フォントファミリー
+settings.font_search:
+  en: Search fonts...
+  ja: フォントを検索...
 settings.font_size:
   en: Font Size
   ja: フォントサイズ
@@ -40,6 +43,12 @@ settings.background_blur:
 settings.minimum_contrast:
   en: Minimum Contrast
   ja: 最小コントラスト
+settings.group.interface:
+  en: Interface
+  ja: インターフェース
+settings.ui_font_size:
+  en: Font Size (px)
+  ja: フォントサイズ (px)
 settings.group.layout:
   en: Layout
   ja: レイアウト
@@ -165,6 +174,9 @@ choice.dark:
 choice.light:
   en: Light
   ja: ライト
+choice.system_font:
+  en: System
+  ja: システム
 choice.system_language:
   en: System
   ja: システムに合わせる
