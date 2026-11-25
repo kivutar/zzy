@@ -64,6 +64,9 @@ settings.tabs_in_title_bar:
 settings.border_width:
   en: Border Width (px)
   ja: 枠線の太さ (px)
+settings.window_radius:
+  en: Window Corner Radius (px)
+  ja: ウィンドウの角の丸み (px)
 settings.border_when_maximized:
   en: Border When Maximized or Fullscreen
   ja: 最大化・全画面表示時も枠線を表示

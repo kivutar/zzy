@@ -208,7 +208,8 @@ impl Zzy {
         let theme_changed = settings.theme(self.system_dark) != self.theme()
             || settings.background_opacity != self.settings.background_opacity
             || settings.ui_font_family != self.settings.ui_font_family
-            || settings.ui_font_size != self.settings.ui_font_size;
+            || settings.ui_font_size != self.settings.ui_font_size
+            || settings.window_radius != self.settings.window_radius;
         if theme_changed {
             apply_app_theme(settings.theme(self.system_dark), &settings, cx);
         }
@@ -541,6 +542,8 @@ fn apply_app_theme(choice: ThemeChoice, settings: &AppSettings, cx: &mut App) {
         // gpui-kit sizes its controls in rems of `font_size`: it scales them too.
         theme.font_family = settings.ui_font_family.clone();
         theme.font_size = px(settings.ui_font_size);
+        // Rounds the window's free corners (gpui-kit squares tiled ones).
+        theme.window_radius = px(settings.window_radius);
     });
 }
 

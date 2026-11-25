@@ -77,6 +77,9 @@ pub struct AppSettings {
     pub border_when_maximized: bool,
     /// Width of the window border, in pixels.
     pub border_width: f32,
+    /// Radius of the window's corners, in pixels (0: square). Only corners
+    /// away from screen edges: maximized and snapped windows stay square.
+    pub window_radius: f32,
     /// Minimum APCA contrast between text and its background (0: off): text
     /// too close to it is made lighter or darker. Same measure and default as
     /// Zed's terminal, which also spares colors a program picked exactly (true
@@ -114,6 +117,7 @@ impl Default for AppSettings {
             tabs_in_title_bar: false,
             border_when_maximized: false,
             border_width: 1.0,
+            window_radius: 0.0,
             minimum_contrast: 45.0,
         }
     }
@@ -143,6 +147,7 @@ impl AppSettings {
         self.padding = clamp(self.padding as f64, PADDING_RANGE) as f32;
         self.minimum_contrast = clamp(self.minimum_contrast as f64, CONTRAST_RANGE) as f32;
         self.border_width = clamp(self.border_width as f64, BORDER_WIDTH_RANGE).round() as f32;
+        self.window_radius = clamp(self.window_radius as f64, WINDOW_RADIUS_RANGE).round() as f32;
         self.line_height = clamp(self.line_height as f64, LINE_HEIGHT_RANGE) as f32;
         self.scrollback = clamp(self.scrollback as f64, SCROLLBACK_RANGE) as usize;
         self.background_opacity =
@@ -429,6 +434,7 @@ const PADDING_RANGE: (f64, f64) = (0.0, 48.0);
 const CONTRAST_RANGE: (f64, f64) = (0.0, 100.0);
 /// gpui-kit always draws a 1px border, so it can't go below that.
 const BORDER_WIDTH_RANGE: (f64, f64) = (1.0, 10.0);
+const WINDOW_RADIUS_RANGE: (f64, f64) = (0.0, 20.0);
 const LINE_HEIGHT_RANGE: (f64, f64) = (1.0, 2.0);
 const SCROLLBACK_RANGE: (f64, f64) = (0.0, 50_000.0);
 /// In percent. Below ~10% the window becomes hard to find.
@@ -1006,6 +1012,13 @@ impl Render for SettingsView {
             |s| s.border_width as f64,
             |s, v| s.border_width = v.round() as f32,
         );
+        let window_radius = number(
+            &view,
+            WINDOW_RADIUS_RANGE,
+            1.0,
+            |s| s.window_radius as f64,
+            |s, v| s.window_radius = v.round() as f32,
+        );
         let border_when_maximized = switch(
             &view,
             |s| s.border_when_maximized,
@@ -1104,6 +1117,7 @@ impl Render for SettingsView {
                                     tabs_in_title_bar,
                                 ),
                                 SettingItem::new(tr("settings.border_width"), border_width),
+                                SettingItem::new(tr("settings.window_radius"), window_radius),
                                 SettingItem::new(
                                     tr("settings.border_when_maximized"),
                                     border_when_maximized,
