@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-gpui-kit = { git = "https://github.com/longbridge/gpui-kit", package = "gpui-kit", rev = "3724f2519634811739589858c3e2a976cd5769c6" }
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", package = "gpui-kit", rev = "6f2a223b2ac71af0e9f654a913ce33227a4ea258" }
 alacritty_terminal = "0.25.1"
 parking_lot = "0.12.5"
 futures = "0.3"
@@ -22,7 +22,7 @@ rust-i18n = "4.2"
 # the window geometry, although the protocol defines it in surface-local
 # coordinates: with client-side decorations the blur ended up shifted, leaving
 # unblurred bands on the left/top edges. Only src/linux/wayland/window.rs
-# differs from gpui-pre-linux 0.3.12. On spec-compliant compositors this would
+# differs from gpui-pre-linux 0.3.14. On spec-compliant compositors this would
 # shift the blur the other way; drop it once KWin is fixed.
 [patch.crates-io]
 gpui-pre-linux = { path = "patches/gpui-pre-linux" }
